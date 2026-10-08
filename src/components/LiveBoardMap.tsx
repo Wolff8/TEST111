@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Gtw, Plane, Sat, Sensor } from "../lib";
-import { SI_OUTLINE, identLabel } from "../lib";
+import { SI_OUTLINE, identLabel, altColor } from "../lib";
 import { createTrailCanvas, type TrailJob } from "../trail-canvas";
 import type { TrailPt } from "../trail-draw";
 
@@ -37,7 +37,7 @@ function isFiledRemain(t: { future?: boolean; filed?: boolean; color?: string })
   return Boolean(t?.future);
 }
 
-const TRAIL_MAX_MS = 30 * 60_000;
+const TRAIL_MAX_MS = 35 * 60_000; // 35 minutes retention
 
 function pruneTrailPts<T extends { at?: number; future?: boolean }>(pts: T[] | undefined): T[] {
   const now = Date.now();
@@ -55,33 +55,163 @@ function isFlarm(p: Plane) {
   return (p.src === "ogn" || p.role === "soar" || p.role === "glider") && p.role !== "bird" && p.role !== "chute" && p.role !== "small" && p.role !== "aero" && p.role !== "uav" && p.role !== "heli";
 }
 
-function planeMark(p: Plane, on: boolean, label: boolean) {
-  const col = isDji(p)
-    ? "#ff8a3d"
-    : p.role === "uav"
+export type RadarStationId = "puconci" | "dolina43" | "ljms";
+
+export interface RadarStation {
+  id: RadarStationId;
+  name: string;
+  lat: number;
+  lon: number;
+  altM: number;
+  sac: number;
+  sic: number;
+  rangeNm: number;
+}
+
+export const RADAR_STATIONS: Record<RadarStationId, RadarStation> = {
+  puconci: {
+    id: "puconci",
+    name: "Puconci Mode S / SSR (Prekmurje)",
+    lat: 46.7042,
+    lon: 16.1601,
+    altM: 220,
+    sac: 191,
+    sic: 48,
+    rangeNm: 120,
+  },
+  dolina43: {
+    id: "dolina43",
+    name: "Dolina (Puconci) SDR Head",
+    lat: 46.74567394991525,
+    lon: 16.194033073880615,
+    altM: 265,
+    sac: 191,
+    sic: 43,
+    rangeNm: 120,
+  },
+  ljms: {
+    id: "ljms",
+    name: "LJMS Murska Sobota Airfield Radar",
+    lat: 46.6590,
+    lon: 16.1720,
+    altM: 184,
+    sac: 191,
+    sic: 25,
+    rangeNm: 80,
+  },
+};
+
+export function calcPolar(origin: { lat: number; lon: number }, lat: number, lon: number) {
+  const φ1 = (origin.lat * Math.PI) / 180;
+  const φ2 = (lat * Math.PI) / 180;
+  const Δφ = φ2 - φ1;
+  const Δλ = ((lon - origin.lon) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const distM = 2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(a)));
+  const rhoNm = distM / 1852;
+  const rhoKm = distM / 1000;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  let thetaDeg = (Math.atan2(y, x) * 180) / Math.PI;
+  if (thetaDeg < 0) thetaDeg += 360;
+  const rad = (thetaDeg * Math.PI) / 180;
+  const cartX = rhoNm * Math.sin(rad);
+  const cartY = rhoNm * Math.cos(rad);
+  return {
+    rhoNm: +rhoNm.toFixed(1),
+    rhoKm: +rhoKm.toFixed(1),
+    thetaDeg: +thetaDeg.toFixed(1),
+    cartX: +cartX.toFixed(1),
+    cartY: +cartY.toFixed(1),
+  };
+}
+
+export type DronetagOp = {
+  id: string;
+  sensorId?: string;
+  status?: string;
+  maker?: string;
+  bbox?: { minLon: number; minLat: number; maxLon: number; maxLat: number } | null;
+  centerLat?: number | null;
+  centerLon?: number | null;
+  timeCreated?: string;
+  timeLastTelemetry?: string;
+};
+
+export type NotamItem = {
+  series?: string;
+  seriesName?: string;
+  number?: string;
+  type?: string;
+  fir?: string;
+  location?: string;
+  lowerLimit?: string;
+  upperLimit?: string;
+  validFrom?: string;
+  validTo?: string;
+  text?: string;
+  geoCircle?: { lat: number; lon: number; radiusNm: number; radiusKm: number } | null;
+  isMilitary?: boolean;
+  isDroneRestriction?: boolean;
+};
+
+export type WeatherStation = {
+  icao: string;
+  name: string;
+  lat: number;
+  lon: number;
+  elevFt?: number;
+  metar?: {
+    raw?: string;
+    obsTime?: string;
+    tempC?: number;
+    dewpC?: number;
+    windDirDeg?: number;
+    windSpeedKt?: number;
+    altimHpa?: number;
+    visMiles?: number;
+    fltCat?: "VFR" | "MVFR" | "IFR" | "LIFR" | string;
+    wxString?: string;
+  };
+};
+
+function planeMark(p: Plane, on: boolean, label: boolean, colorByAlt = true) {
+  const alt = Number(p.altFt) || 0;
+  const altC = altColor(alt);
+  const col = colorByAlt
+    ? altC
+    : isDji(p)
       ? "#ff8a3d"
-      : p.role === "ground"
-        ? "#9bb8c9"
-        : p.role === "modes" || p.src === "mode_s"
-          ? "#c77dff"
-      : p.role === "echo" || p.src === "psr"
-        ? "#9ad7ff"
-      : p.role === "bird"
-        ? "#e8d48a"
-        : p.role === "chute"
+      : p.role === "uav"
         ? "#ff8a3d"
-        : p.role === "aero"
-          ? "#ff4d8d"
-          : p.role === "soar"
-        ? "#f5d742"
-        : p.role === "glider"
-          ? "#3ee07a"
-          : p.role === "balloon"
+        : p.role === "ground"
+          ? "#9bb8c9"
+          : p.role === "modes" || p.src === "mode_s"
             ? "#c77dff"
-            : isUid(p)
-              ? "#ff8a3d"
-              : p.color;
-  return `<span class="ac-mark ${on ? "on" : ""} ${label ? "" : "bare"} ${isUid(p) ? "uid" : ""} ${p.heard ? "heard" : ""} ${p.nm || p.src === "nm" ? "nm" : ""} ${p.fpl || p.ifps || p.src === "fpl" ? "fpl" : ""} ${p.role} ${isFlock(p) ? "flock" : ""} ${isDji(p) ? "dji" : ""} ${isFlarm(p) ? "flarm" : ""}">${planeSvg(p, col)}${label && p.role !== "bird" && p.role !== "echo" ? `<b class="cs">${callsign(p)}</b>` : ""}</span>`;
+        : p.role === "echo" || p.src === "psr"
+          ? "#9ad7ff"
+        : p.role === "bird"
+          ? "#e8d48a"
+          : p.role === "chute"
+          ? "#ff8a3d"
+          : p.role === "aero"
+            ? "#ff4d8d"
+            : p.role === "soar"
+          ? "#f5d742"
+          : p.role === "glider"
+            ? "#3ee07a"
+            : p.role === "balloon"
+              ? "#c77dff"
+              : isUid(p)
+                ? "#ff8a3d"
+                : p.color;
+
+  const flText = alt >= 5500 ? `FL${Math.round(alt / 100)}` : `${alt}′`;
+  const csLabel = label && p.role !== "bird" && p.role !== "echo"
+    ? `<b class="cs" style="border-left: 2px solid ${col}">${callsign(p)}${on || label ? ` <span style="color:${altC};font-weight:400">${flText}</span>` : ""}</b>`
+    : "";
+
+  return `<span class="ac-mark ${on ? "on" : ""} ${label ? "" : "bare"} ${isUid(p) ? "uid" : ""} ${p.heard ? "heard" : ""} ${p.nm || p.src === "nm" ? "nm" : ""} ${p.fpl || p.ifps || p.src === "fpl" ? "fpl" : ""} ${p.role} ${isFlock(p) ? "flock" : ""} ${isDji(p) ? "dji" : ""} ${isFlarm(p) ? "flarm" : ""}">${planeSvg(p, col)}${csLabel}</span>`;
 }
 
 function planeSvg(p: Plane | string, color?: string) {
@@ -126,7 +256,7 @@ function planeSvg(p: Plane | string, color?: string) {
     return `<span class="ac soar" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="${c}" stroke="#071018" stroke-width="1.2" stroke-linejoin="round" d="M16 3.1 26.6 26.6 16 20.4 5.4 26.6z"/></svg></span>`;
   }
   if (role === "glider") {
-    return `<span class="ac glider" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 40 24" aria-hidden="true"><path fill="${c}" d="M2 12h36L20 8z"/><path fill="${c}" d="M18 8h4v12h-4z"/><path fill="${c}" d="M16 18h8l-4 4z"/></svg></span>`;
+    return `<span class="ac glider" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 40 24" aria-hidden="true"><path fill="${c}" d="M22 12h36L20 8z"/><path fill="${c}" d="M18 8h4v12h-4z"/><path fill="${c}" d="M16 18h8l-4 4z"/></svg></span>`;
   }
   if (role === "balloon") {
     return `<span class="ac balloon" style="--c:${c};--r:0deg"><svg viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="13" rx="9" ry="11" fill="${c}"/><rect x="13" y="24" width="6" height="5" rx="1" fill="${c}"/><path d="M10 20 13 24M22 20 19 24" stroke="${c}" stroke-width="1.4"/></svg></span>`;
@@ -205,6 +335,9 @@ export function LiveBoardMap(props: {
   radio?: { lat: number; lon: number; n?: number } | null;
   rain?: RainSnap | null;
   showRain?: boolean;
+  dronetagOps?: DronetagOp[];
+  notams?: NotamItem[];
+  weather?: WeatherStation[];
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -224,6 +357,32 @@ export function LiveBoardMap(props: {
   const rainUrl = useRef("");
   const trailCanvas = useRef<ReturnType<typeof createTrailCanvas> | null>(null);
   const [zoom, setZoom] = useState(props.center.zoom || 8);
+
+  // Modern interactive UI states
+  const [showAsterixRadar, setShowAsterixRadar] = useState(true);
+  const [altColorMode, setAltColorMode] = useState(true);
+  const [showDronetagOps, setShowDronetagOps] = useState(true);
+  const [showNotamZones, setShowNotamZones] = useState(true);
+  const [showWeatherStations, setShowWeatherStations] = useState(true);
+  const [activeStationId, setActiveStationId] = useState<RadarStationId>("puconci");
+
+  const radarLayerRef = useRef<L.FeatureGroup | null>(null);
+  const dronetagLayerRef = useRef<L.FeatureGroup | null>(null);
+  const notamLayerRef = useRef<L.FeatureGroup | null>(null);
+  const weatherLayerRef = useRef<L.FeatureGroup | null>(null);
+
+  const activeStation = RADAR_STATIONS[activeStationId];
+
+  // Picked plane details
+  const pickedPlane = useMemo(() => {
+    if (!props.pick) return null;
+    return (props.planes || []).find((p) => p.id === props.pick) || null;
+  }, [props.pick, props.planes]);
+
+  const pickedPolar = useMemo(() => {
+    if (!pickedPlane?.lat || !pickedPlane?.lon) return null;
+    return calcPolar(activeStation, pickedPlane.lat, pickedPlane.lon);
+  }, [pickedPlane, activeStation]);
 
   useEffect(() => {
     if (!ref.current || mapRef.current) return;
@@ -289,6 +448,7 @@ export function LiveBoardMap(props: {
     map.setView([props.center.lat, props.center.lon], props.center.zoom || 8);
   }, [props.center.lat, props.center.lon, props.center.zoom]);
 
+  // Border & Radio Coverage
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -312,41 +472,302 @@ export function LiveBoardMap(props: {
       {
         color: "#6aa8ff",
         weight: 1,
-        opacity: 0.4,
+        opacity: 0.35,
         dashArray: "6 7",
         fill: false,
         interactive: false,
       },
     ).addTo(g);
-    L.circle([46.12, 14.82], {
-      radius: 280 * 1852,
-      color: "#3ee0c2",
-      weight: 1,
-      opacity: 0.18,
-      dashArray: "2 10",
-      fill: false,
-      interactive: false,
-    }).addTo(g);
-    if (props.radio?.lat && props.radio?.lon) {
-      L.circle([props.radio.lat, props.radio.lon], {
-        radius: 220_000,
-        color: "#f5d742",
-        weight: 1.4,
-        opacity: 0.55,
-        dashArray: "4 6",
-        fillColor: "#f5d742",
-        fillOpacity: 0.04,
-        interactive: false,
-      }).addTo(g);
-    }
     borderRef.current = g;
     g.bringToBack();
     return () => {
       g.remove();
       if (borderRef.current === g) borderRef.current = null;
     };
-  }, [props.showBorder, props.radio?.lat, props.radio?.lon]);
+  }, [props.showBorder]);
 
+  // ASTERIX CAT 048 Radar Geometry Layer (Stations, Range Rings, Azimuth Radials, Polar Slant Line)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    radarLayerRef.current?.remove();
+    radarLayerRef.current = null;
+    if (!showAsterixRadar) return;
+
+    const g = L.featureGroup().addTo(map);
+    radarLayerRef.current = g;
+
+    // 1. Radar Stations
+    for (const st of Object.values(RADAR_STATIONS)) {
+      const isSel = st.id === activeStationId;
+      const html = `
+        <div class="radar-station-pin">
+          <svg width="28" height="28" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="14" fill="${isSel ? 'rgba(62,224,194,0.2)' : 'rgba(106,168,255,0.1)'}" stroke="${isSel ? '#3ee0c2' : '#6aa8ff'}" stroke-width="2"/>
+            <circle cx="18" cy="18" r="4" fill="${isSel ? '#3ee0c2' : '#6aa8ff'}"/>
+            <line x1="18" y1="4" x2="18" y2="32" stroke="${isSel ? '#3ee0c2' : '#6aa8ff'}" stroke-width="1.2" stroke-dasharray="2 2"/>
+            <line x1="4" y1="18" x2="32" y2="18" stroke="${isSel ? '#3ee0c2' : '#6aa8ff'}" stroke-width="1.2" stroke-dasharray="2 2"/>
+          </svg>
+          <div class="radar-station-label">${st.id.toUpperCase()} SAC${st.sac}</div>
+        </div>
+      `;
+      const m = L.marker([st.lat, st.lon], {
+        icon: mkIcon(html, "radar-station-wrap", 54),
+        zIndexOffset: 850,
+      }).addTo(g);
+      m.on("click", () => setActiveStationId(st.id));
+    }
+
+    // 2. Tactical Range Rings centered on active station
+    const rings = [10, 25, 50, 80, 120];
+    for (const r of rings) {
+      const rMeters = r * 1852;
+      L.circle([activeStation.lat, activeStation.lon], {
+        radius: rMeters,
+        color: "#3ee0c2",
+        weight: r === 50 || r === 120 ? 1.4 : 0.8,
+        opacity: r === 50 ? 0.45 : 0.25,
+        dashArray: "4 8",
+        fill: false,
+        interactive: false,
+      }).addTo(g);
+
+      // Distance tag along 045° radial
+      const latOffset = (r * 1852 * Math.cos(Math.PI / 4)) / 111320;
+      const lonOffset = (r * 1852 * Math.sin(Math.PI / 4)) / (111320 * Math.cos((activeStation.lat * Math.PI) / 180));
+      const lblHtml = `<div class="radar-ring-text">${r}NM</div>`;
+      L.marker([activeStation.lat + latOffset, activeStation.lon + lonOffset], {
+        icon: mkIcon(lblHtml, "radar-lbl-wrap", 34),
+        interactive: false,
+        zIndexOffset: 300,
+      }).addTo(g);
+    }
+
+    // 3. Azimuth Radials (every 30°)
+    for (let deg = 0; deg < 360; deg += 30) {
+      const rad = (deg * Math.PI) / 180;
+      const maxNm = 120;
+      const latEnd = activeStation.lat + (maxNm * 1852 * Math.cos(rad)) / 111320;
+      const lonEnd = activeStation.lon + (maxNm * 1852 * Math.sin(rad)) / (111320 * Math.cos((activeStation.lat * Math.PI) / 180));
+      L.polyline([[activeStation.lat, activeStation.lon], [latEnd, lonEnd]], {
+        color: "#3ee0c2",
+        weight: deg % 90 === 0 ? 1.0 : 0.5,
+        opacity: deg % 90 === 0 ? 0.35 : 0.15,
+        dashArray: "2 6",
+        interactive: false,
+      }).addTo(g);
+
+      // Radial label at tip
+      const degStr = String(deg).padStart(3, "0") + "°";
+      L.marker([latEnd, lonEnd], {
+        icon: mkIcon(`<div class="radar-radial-text">${degStr}</div>`, "radial-lbl", 28),
+        interactive: false,
+        zIndexOffset: 250,
+      }).addTo(g);
+    }
+
+    // 4. Polar Slant Line to picked aircraft
+    if (pickedPlane?.lat && pickedPlane?.lon && pickedPolar) {
+      L.polyline([[activeStation.lat, activeStation.lon], [pickedPlane.lat, pickedPlane.lon]], {
+        color: "#3ee0c2",
+        weight: 2.2,
+        opacity: 0.95,
+        dashArray: "6 6",
+        interactive: false,
+      }).addTo(g);
+
+      // Polar readout badge at midpoint
+      const midLat = (activeStation.lat + pickedPlane.lat) / 2;
+      const midLon = (activeStation.lon + pickedPlane.lon) / 2;
+      const badgeHtml = `
+        <div class="polar-slant-badge">
+          ρ: ${pickedPolar.rhoNm}NM (${pickedPolar.rhoKm}km) · θ: ${pickedPolar.thetaDeg}°<br/>
+          X: ${pickedPolar.cartX}NM · Y: ${pickedPolar.cartY}NM
+        </div>
+      `;
+      L.marker([midLat, midLon], {
+        icon: mkIcon(badgeHtml, "polar-badge-wrap", 120),
+        interactive: false,
+        zIndexOffset: 920,
+      }).addTo(g);
+    }
+
+    return () => {
+      g.remove();
+      if (radarLayerRef.current === g) radarLayerRef.current = null;
+    };
+  }, [showAsterixRadar, activeStationId, activeStation, pickedPlane?.lat, pickedPlane?.lon, pickedPolar]);
+
+  // Dronetag Operations Layer (Real live drone airspace zones from api.dronetag.app)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    dronetagLayerRef.current?.remove();
+    dronetagLayerRef.current = null;
+    if (!showDronetagOps || !props.dronetagOps?.length) return;
+
+    const g = L.featureGroup().addTo(map);
+    dronetagLayerRef.current = g;
+
+    for (const op of props.dronetagOps) {
+      if (op.bbox) {
+        const bounds: L.LatLngBoundsExpression = [
+          [op.bbox.minLat, op.bbox.minLon],
+          [op.bbox.maxLat, op.bbox.maxLon],
+        ];
+        L.rectangle(bounds, {
+          color: "#ff8a3d",
+          weight: 1.8,
+          opacity: 0.85,
+          dashArray: "5 5",
+          fillColor: "#ff8a3d",
+          fillOpacity: 0.12,
+        })
+          .bindPopup(`<b>DRONETAG OPERATION</b><br/>ID: ${op.id}<br/>Maker: ${op.maker || "UAS"}<br/>Status: ${op.status || "active"}`)
+          .addTo(g);
+      }
+      if (op.centerLat && op.centerLon) {
+        const pinHtml = `
+          <div class="dronetag-ops-pin">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="1.5"/></svg>
+            ${op.maker || "DRONE"}
+          </div>
+        `;
+        L.marker([op.centerLat, op.centerLon], {
+          icon: mkIcon(pinHtml, "dronetag-pin-wrap", 70),
+          zIndexOffset: 700,
+        })
+          .bindPopup(`<b>DRONETAG LIVE OP</b><br/>ID: ${op.id}<br/>Sensor: ${op.sensorId || "RID"}<br/>Time: ${op.timeCreated || ""}`)
+          .addTo(g);
+      }
+    }
+
+    return () => {
+      g.remove();
+      if (dronetagLayerRef.current === g) dronetagLayerRef.current = null;
+    };
+  }, [showDronetagOps, props.dronetagOps]);
+
+  // NOTAM Danger Zones Layer (Slovenia Control KZPS)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    notamLayerRef.current?.remove();
+    notamLayerRef.current = null;
+    if (!showNotamZones || !props.notams?.length) return;
+
+    const g = L.featureGroup().addTo(map);
+    notamLayerRef.current = g;
+
+    // Deduplicate NOTAM circles by location and radius to prevent compounding opacity blobs
+    const grouped = new Map<string, { lat: number; lon: number; radiusKm: number; isMil: boolean; notams: any[] }>();
+
+    for (const n of props.notams) {
+      if (!n.geoCircle?.lat || !n.geoCircle?.lon) continue;
+      const key = `${n.geoCircle.lat.toFixed(3)}_${n.geoCircle.lon.toFixed(3)}_${(n.geoCircle.radiusKm || 5).toFixed(1)}`;
+      const isMil = n.isMilitary || n.series === "B";
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          lat: n.geoCircle.lat,
+          lon: n.geoCircle.lon,
+          radiusKm: n.geoCircle.radiusKm || 5,
+          isMil,
+          notams: [n],
+        });
+      } else {
+        const item = grouped.get(key)!;
+        if (isMil) item.isMil = true;
+        item.notams.push(n);
+      }
+    }
+
+    for (const item of grouped.values()) {
+      const col = item.isMil ? "#ff4d4d" : "#ff8a3d";
+      const count = item.notams.length;
+      const title = count > 1 ? `${count} NOTAMs (${item.notams.map((x) => x.number).slice(0, 3).join(", ")}${count > 3 ? "..." : ""})` : `KZPS NOTAM ${item.notams[0].number || ""}`;
+
+      const popupHtml = `
+        <div style="max-height: 240px; overflow-y: auto; font-size: 11px; line-height: 1.4;">
+          <div style="font-weight: 700; color: ${col}; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px; margin-bottom: 6px;">
+            ${item.isMil ? "🔴 MILITARY / SPECIAL RESTRICTION" : "🟠 AIRSPACE NOTAM"} · ${item.radiusKm.toFixed(1)} km radius
+          </div>
+          ${item.notams
+            .map(
+              (n) => `
+            <div style="margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed rgba(255,255,255,0.08);">
+              <b>${n.number || ""}</b> <span style="color: #94a3b8;">(${n.lowerLimit || "000"} - ${n.upperLimit || "UNL"})</span><br/>
+              <span style="color: #cbd5e1;">${htxt(n.text || "")}</span>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+      `;
+
+      L.circle([item.lat, item.lon], {
+        radius: item.radiusKm * 1000,
+        color: col,
+        weight: 1.0,
+        opacity: 0.35,
+        dashArray: "4 6",
+        fillColor: col,
+        fillOpacity: 0.025,
+      })
+        .bindPopup(popupHtml)
+        .addTo(g);
+
+      const labelText = count > 1 ? `⚠ ${item.notams[0].location || "ZONE"} (${count})` : `⚠ ${item.notams[0].number || "NOTAM"}`;
+      const pinHtml = `<div class="notam-pin" style="color:${col};border-color:${col};opacity:0.65;font-size:10px;padding:1px 4px;">${labelText}</div>`;
+      L.marker([item.lat, item.lon], {
+        icon: mkIcon(pinHtml, "notam-pin-wrap", 64),
+        zIndexOffset: 150, // keep well below planes and radar blips
+      })
+        .bindPopup(popupHtml)
+        .addTo(g);
+    }
+
+    return () => {
+      g.remove();
+      if (notamLayerRef.current === g) notamLayerRef.current = null;
+    };
+  }, [showNotamZones, props.notams]);
+
+  // NOAA Aviation Weather (METAR/TAF) Layer
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    weatherLayerRef.current?.remove();
+    weatherLayerRef.current = null;
+    if (!showWeatherStations || !props.weather?.length) return;
+
+    const g = L.featureGroup().addTo(map);
+    weatherLayerRef.current = g;
+
+    for (const st of props.weather) {
+      const fltCat = st.metar?.fltCat || "VFR";
+      const temp = st.metar?.tempC != null ? `${st.metar.tempC}°C` : "";
+      const wind = st.metar?.windSpeedKt != null ? `${st.metar.windSpeedKt}kt` : "";
+      const pinHtml = `
+        <div class="metar-wx-pin ${fltCat}">
+          <b>${st.icao}</b>
+          <span style="font-size:8px">${fltCat} ${temp} ${wind}</span>
+        </div>
+      `;
+      L.marker([st.lat, st.lon], {
+        icon: mkIcon(pinHtml, "metar-pin-wrap", 58),
+        zIndexOffset: 750,
+      })
+        .bindPopup(`<b>${st.name} (${st.icao})</b><br/><b>Flight Cat:</b> ${fltCat}<br/><b>METAR:</b> <code>${st.metar?.raw || "N/A"}</code>`)
+        .addTo(g);
+    }
+
+    return () => {
+      g.remove();
+      if (weatherLayerRef.current === g) weatherLayerRef.current = null;
+    };
+  }, [showWeatherStations, props.weather]);
+
+  // Aircraft & Trails Updates
   useEffect(() => {
     const lg = layers.current;
     if (!lg) return;
@@ -432,7 +853,7 @@ export function LiveBoardMap(props: {
           p.lon,
           L.divIcon({
             className: `ac-wrap ${on ? "on" : ""} ${labeled ? "" : "bare"} ${isFlarm(p) ? "flarm" : ""} ${p.role === "bird" ? "bird" : ""} ${p.role === "echo" ? "echo" : ""} ${isFlock(p) ? "flock" : ""} ${p.role === "uav" || p.src === "rid" ? "hot-uav" : ""} ${p.taxi ? "taxi" : ""} ${p.fastLow ? "fast-low" : ""}`,
-            html: planeMark(p, on, labeled),
+            html: planeMark(p, on, labeled, altColorMode),
             iconSize: isFlock(p)
               ? on
                 ? [72, 48]
@@ -579,74 +1000,9 @@ export function LiveBoardMap(props: {
       }
     }
     if (!props.pick) panned.current = "";
-  }, [zoom, props.planes, props.gateways, props.sensors, props.mesh, props.sats, props.pick, props.showPlanes, props.showGtw, props.showSensors, props.showMesh, props.showSats, props.showFiled]);
+  }, [zoom, props.planes, props.gateways, props.sensors, props.mesh, props.sats, props.pick, props.showPlanes, props.showGtw, props.showSensors, props.showMesh, props.showSats, props.showFiled, altColorMode]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    overlayRef.current?.remove();
-    const g = L.featureGroup().addTo(map);
-    overlayRef.current = g;
-    const fire = (id: string) => pickRef.current(id);
-    for (const o of props.overlays || []) {
-      const on = props.pick === o.id;
-      const col = o.color || (o.kind === "sig" ? "#ff5d5d" : o.kind === "wx" ? "#f5b942" : o.kind === "met" ? "#3ee07a" : "#6aa8ff");
-      if (o.ring && o.ring.length >= 3) {
-        const poly = L.polygon(o.ring as L.LatLngExpression[], {
-          color: col,
-          weight: on ? 2.6 : 1.6,
-          opacity: on ? 0.95 : 0.7,
-          fillColor: col,
-          fillOpacity: on ? 0.22 : 0.1,
-        });
-        (poly as L.Polygon & { _ovId?: string })._ovId = o.id;
-        poly.on("click", (e) => {
-          L.DomEvent.stop(e);
-          fire(o.id);
-        });
-        poly.addTo(g);
-      }
-      if (Number.isFinite(o.lat) && Number.isFinite(o.lon)) {
-        const m = L.marker([Number(o.lat), Number(o.lon)], {
-          icon: mkIcon(overlayPin(o, on), `ov-wrap ${o.kind} ${on ? "on" : ""}`, on ? 52 : 40),
-          zIndexOffset: on ? 980 : 500,
-          keyboard: true,
-          riseOnHover: true,
-        }).on("click", (e) => {
-          L.DomEvent.stop(e);
-          fire(o.id);
-        });
-        (m as L.Marker & { _ovId?: string })._ovId = o.id;
-        m.addTo(g);
-      }
-    }
-    if (!props.pick) panned.current = "";
-    if (props.pick && panned.current !== props.pick) {
-      let fitted = false;
-      g.eachLayer((ly) => {
-        const id = (ly as L.Layer & { _ovId?: string })._ovId;
-        if (id !== props.pick || !(ly instanceof L.Polygon)) return;
-        const b = ly.getBounds();
-        if (b.isValid()) {
-          map.fitBounds(b.pad(0.18), { animate: true, maxZoom: 9 });
-          fitted = true;
-          panned.current = props.pick;
-        }
-      });
-      if (!fitted) {
-        const hit = (props.overlays || []).find((o) => o.id === props.pick);
-        if (hit?.lat && hit?.lon) {
-          map.panTo([hit.lat, hit.lon], { animate: true });
-          panned.current = props.pick;
-        }
-      }
-    }
-    return () => {
-      g.remove();
-      if (overlayRef.current === g) overlayRef.current = null;
-    };
-  }, [props.overlays, props.pick]);
-
+  // RainViewer Radar Tiles
   useEffect(() => {
     const map = mapRef.current;
     const latest = props.rain?.now?.tiles || props.rain?.frames?.at(-1)?.tiles || "";
@@ -675,5 +1031,139 @@ export function LiveBoardMap(props: {
     }
   }, [props.rain?.now?.tiles, props.showRain]);
 
-  return <div className="omap" ref={ref} role="presentation" />;
+  return (
+    <div className="map-wrap">
+      {/* Floating Modern Tactical Toolbar */}
+      <div className="map-toolbar">
+        <button
+          type="button"
+          className={`map-tool-btn ${showAsterixRadar ? "active" : ""}`}
+          onClick={() => setShowAsterixRadar(!showAsterixRadar)}
+        >
+          <span className="dot-ind" />
+          📡 ASTX RADAR
+        </button>
+        <button
+          type="button"
+          className={`map-tool-btn ${altColorMode ? "active" : ""}`}
+          onClick={() => setAltColorMode(!altColorMode)}
+        >
+          <span className="dot-ind" />
+          🌈 ALT GRADIENT
+        </button>
+        <button
+          type="button"
+          className={`map-tool-btn ${showDronetagOps ? "active" : ""}`}
+          onClick={() => setShowDronetagOps(!showDronetagOps)}
+        >
+          <span className="dot-ind" />
+          🛸 DRONETAG ({props.dronetagOps?.length || 0})
+        </button>
+        <button
+          type="button"
+          className={`map-tool-btn ${showNotamZones ? "active" : ""}`}
+          onClick={() => setShowNotamZones(!showNotamZones)}
+        >
+          <span className="dot-ind" />
+          ⚠️ NOTAM ({props.notams?.length || 0})
+        </button>
+        <button
+          type="button"
+          className={`map-tool-btn ${showWeatherStations ? "active" : ""}`}
+          onClick={() => setShowWeatherStations(!showWeatherStations)}
+        >
+          <span className="dot-ind" />
+          🌦️ METAR ({props.weather?.length || 0})
+        </button>
+      </div>
+
+      {/* Floating Tactical ASTERIX CAT 048 HUD Overlay */}
+      {showAsterixRadar && (
+        <div className="asterix-map-hud">
+          <div className="hud-header">
+            <span className="hud-title">
+              <span className="live-blip" />
+              ASTERIX CAT 048 · {activeStation.id.toUpperCase()}
+            </span>
+            <span style={{ fontSize: "10px", color: "#3ee0c2", fontWeight: 700 }}>
+              SAC {activeStation.sac} / SIC {activeStation.sic}
+            </span>
+          </div>
+
+          <div className="hud-grid">
+            <div className="hud-item">
+              <span className="hud-label">AIR TARGETS</span>
+              <span className="hud-val cyan">{props.planes?.length || 0} TRACKS</span>
+            </div>
+            <div className="hud-item">
+              <span className="hud-label">RADAR STATION</span>
+              <span className="hud-val amber">{activeStation.name.split(" ")[0]} ({activeStation.altM}m)</span>
+            </div>
+            {pickedPlane && pickedPolar ? (
+              <>
+                <div className="hud-item">
+                  <span className="hud-label">SELECTED CALLSIGN</span>
+                  <span className="hud-val coral">{callsign(pickedPlane)} ({pickedPlane.id.toUpperCase()})</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">MODE 3/A SQUAWK</span>
+                  <span className="hud-val cyan">{pickedPlane.squawk || "7000"}</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">POLAR SLANT RANGE (ρ)</span>
+                  <span className="hud-val cyan">{pickedPolar.rhoNm} NM ({pickedPolar.rhoKm} km)</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">AZIMUTH BEARING (θ)</span>
+                  <span className="hud-val cyan">{pickedPolar.thetaDeg}°</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">CARTESIAN X / Y</span>
+                  <span className="hud-val amber">X:{pickedPolar.cartX} NM · Y:{pickedPolar.cartY} NM</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">BARO ALT / FLIGHT LEVEL</span>
+                  <span className="hud-val amber">{pickedPlane.altFt ? `FL${Math.round(pickedPlane.altFt / 100)} (${pickedPlane.altFt} ft)` : "GND"}</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">GROUND SPEED</span>
+                  <span className="hud-val">{Math.round(pickedPlane.gs || 0)} KT</span>
+                </div>
+                <div className="hud-item">
+                  <span className="hud-label">TRACK HEADING</span>
+                  <span className="hud-val">{Math.round(pickedPlane.track || 0)}°</span>
+                </div>
+              </>
+            ) : (
+              <div className="hud-item" style={{ gridColumn: "1 / -1" }}>
+                <span className="hud-label">TARGET INTERROGATION</span>
+                <span style={{ fontSize: "10px", color: "#728a9c" }}>
+                  Click any aircraft on the map to display real-time polar slant vector (ρ, θ) and ASTERIX CAT 048 data block.
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Altitude Gradient Legend Bar */}
+      {altColorMode && (
+        <div className="alt-legend-bar">
+          <span className="alt-legend-title">ALTITUDE GRADIENT (30-MIN RETENTION)</span>
+          <div className="alt-gradient-strip" />
+          <div className="alt-legend-stops">
+            <span>0′</span>
+            <span>3.5k</span>
+            <span>8k</span>
+            <span>16k</span>
+            <span>24k</span>
+            <span>32k</span>
+            <span>FL420+</span>
+          </div>
+        </div>
+      )}
+
+      <div className="omap" ref={ref} role="presentation" />
+    </div>
+  );
 }

@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import { LiveBoardMap, type MapOverlay, type RainSnap } from "../components/LiveBoardMap";
 import { AsterixRadarScope } from "../components/AsterixRadarScope";
 import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
+import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -28,7 +29,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -836,7 +837,9 @@ export function OpsPage(props: { view: View }) {
             ? "Data"
             : view === "b2b"
               ? "B2B / FPL"
-              : "Operations";
+              : view === "spotting"
+                ? "Tactical Spotting"
+                : "Operations";
   const note =
     view === "lora"
       ? lora?.note
@@ -844,9 +847,13 @@ export function OpsPage(props: { view: View }) {
         ? sensors?.note
         : view === "radar"
           ? radar?.note
-          : view === "data"
-            ? "Live METAR, SIGMET, arrivals, NSV — tap a row or the map."
-            : "All live public feeds at once. Empty is a fact. No simulation.";
+          : view === "b2b"
+            ? "Eurocontrol NM B2B, ICAO Doc 4444 validator, and OpenSky route resolver."
+            : view === "spotting"
+              ? "Unexpected arrivals, Pilatus military flights, Fraport Brnik extranet, and airband radio."
+              : view === "data"
+                ? "Live METAR, SIGMET, arrivals, NSV — tap a row or the map."
+                : "All live public feeds at once. Empty is a fact. No simulation.";
 
   const showPlanes = view === "ops" || view === "radar" || view === "data";
   const showGtw = view === "ops" || view === "lora";
@@ -1296,7 +1303,7 @@ export function OpsPage(props: { view: View }) {
         ) : null}
       </header>
 
-      {view === "data" || view === "b2b" ? null : (
+      {view === "data" || view === "b2b" || view === "spotting" ? null : (
       <div className="chips" role="tablist" aria-label="region">
         {PLACES.map((p) => (
           <button key={p.id} type="button" className={place === p.id ? "on" : ""} onClick={() => setPlace(p.id)}>
@@ -1428,7 +1435,17 @@ export function OpsPage(props: { view: View }) {
         />
       ) : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" ? null : (
+      {view === "spotting" ? (
+        <SpottingTacticalFeed
+          planes={mapPlanes}
+          onPinpointPlane={(planeId) => {
+            setPick(planeId);
+            window.location.hash = "#/radar";
+          }}
+        />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1527,7 +1544,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
-      {view === "b2b" ? null : (
+      {view === "b2b" || view === "spotting" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">

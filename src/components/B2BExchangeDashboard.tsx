@@ -76,10 +76,13 @@ const TEMPLATE_FPLS = [
 ];
 
 export function B2BExchangeDashboard({ planes = [], onPinpointPlane, publicUrl }: B2BExchangeDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"fpl" | "routes" | "situation" | "swim">("routes");
+  const [activeTab, setActiveTab] = useState<"fpl" | "routes" | "situation" | "swim" | "briefing">("routes");
   const [b2bStatus, setB2BStatus] = useState<any>(null);
   const [situationData, setSituationData] = useState<SituationReport[]>([]);
   const [trafficData, setTrafficData] = useState<any[]>([]);
+  const [weatherStations, setWeatherStations] = useState<any[]>([]);
+  const [notamsList, setNotamsList] = useState<any[]>([]);
+  const [notamFilter, setNotamFilter] = useState<"ALL" | "MILITARY" | "RUNWAY" | "OBSTACLE">("ALL");
   const [activeReportIdx, setActiveReportIdx] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
@@ -95,14 +98,16 @@ export function B2BExchangeDashboard({ planes = [], onPinpointPlane, publicUrl }
   const [validationResult, setValidationResult] = useState<FplValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
 
-  // Load B2B telemetry & situation reports
+  // Load B2B telemetry & situation reports & weather / notams
   const fetchTelemetry = async (force = false) => {
     setLoading(true);
     try {
-      const [stRes, sitRes, tfRes] = await Promise.all([
+      const [stRes, sitRes, tfRes, wxRes, notamRes] = await Promise.all([
         fetch("/api/b2b/status").then((r) => r.json()).catch(() => null),
         fetch(`/api/b2b/situation${force ? "?force=1" : ""}`).then((r) => r.json()).catch(() => null),
         fetch(`/api/b2b/traffic${force ? "?force=1" : ""}`).then((r) => r.json()).catch(() => null),
+        fetch("/api/aviation/weather").then((r) => r.json()).catch(() => null),
+        fetch("/api/aviation/notams").then((r) => r.json()).catch(() => null),
       ]);
 
       if (stRes?.ok) setB2BStatus(stRes);
@@ -111,6 +116,12 @@ export function B2BExchangeDashboard({ planes = [], onPinpointPlane, publicUrl }
       }
       if (tfRes?.data && Array.isArray(tfRes.data)) {
         setTrafficData(tfRes.data);
+      }
+      if (wxRes?.stations && Array.isArray(wxRes.stations)) {
+        setWeatherStations(wxRes.stations);
+      }
+      if (Array.isArray(notamRes)) {
+        setNotamsList(notamRes);
       }
       setLastRefreshed(new Date().toLocaleTimeString());
     } finally {

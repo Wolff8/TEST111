@@ -66,6 +66,14 @@ import {
   getB2BStatus,
 } from "./b2b-feed.mjs";
 import {
+  SPOTTING_AIRPORTS,
+  SLOVENIAN_STATE_FLEET,
+  analyzeAirportSpotting,
+  identifyMilitaryAsset,
+  FRAPORT_BRNIK_EXTRANET_SPEC,
+  EUROPEAN_AIRBAND_AUDIO_STREAMS,
+} from "./spotting-feed.mjs";
+import {
   ACI_BB_LAYOUT,
   ACI_SITE,
   AEROPUS_KENDO,
@@ -3940,6 +3948,42 @@ const httpServer = createServer(async (req, res) => {
     }
     if (url.pathname === "/api/b2b/status") {
       sendJson(req, res, { ok: true, ...getB2BStatus() });
+      return;
+    }
+    if (url.pathname === "/api/spotting/airports") {
+      sendJson(req, res, { ok: true, airports: SPOTTING_AIRPORTS });
+      return;
+    }
+    if (url.pathname === "/api/spotting/fleet") {
+      sendJson(req, res, { ok: true, count: SLOVENIAN_STATE_FLEET.length, fleet: SLOVENIAN_STATE_FLEET });
+      return;
+    }
+    if (url.pathname === "/api/spotting/arrivals" || url.pathname === "/api/spotting/live") {
+      const icao = (url.searchParams.get("icao") || url.searchParams.get("airport") || "LJMB").toUpperCase();
+      const radar = await loadRadar("si").catch(() => ({ items: [] }));
+      const planes = radar.items || [];
+      const resData = analyzeAirportSpotting(icao, planes);
+      sendJson(req, res, resData);
+      return;
+    }
+    if (url.pathname === "/api/spotting/military") {
+      const radar = await loadRadar("si").catch(() => ({ items: [] }));
+      const planes = radar.items || [];
+      const milPlanes = planes
+        .map((p) => {
+          const m = identifyMilitaryAsset(p);
+          return m.isMilitary ? { ...p, military: m } : null;
+        })
+        .filter(Boolean);
+      sendJson(req, res, { ok: true, count: milPlanes.length, planes: milPlanes, fleet: SLOVENIAN_STATE_FLEET });
+      return;
+    }
+    if (url.pathname === "/api/spotting/extranet" || url.pathname === "/api/brnik/extranet") {
+      sendJson(req, res, { ok: true, ...FRAPORT_BRNIK_EXTRANET_SPEC });
+      return;
+    }
+    if (url.pathname === "/api/spotting/audio" || url.pathname === "/api/atc/live-audio") {
+      sendJson(req, res, { ok: true, streams: EUROPEAN_AIRBAND_AUDIO_STREAMS });
       return;
     }
     if (url.pathname === "/api/eurofpl" || url.pathname === "/api/fpl" || url.pathname === "/api/fpl-live" || url.pathname === "/api/routes") {
