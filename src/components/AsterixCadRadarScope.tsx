@@ -268,7 +268,17 @@ export const AsterixCadRadarScope: React.FC<{
         let color = "#00ff66"; // Standard ASTERIX Mode S
         let symbol = "◇";
 
-        if (isFlarmGlider) {
+        const isMilHeli = Boolean(
+          t.isMil ||
+          t.role === "heli" ||
+          /RANGR|LSV|SVN|506e6/i.test(`${t.callsign || t.flight || ""} ${t.hex || ""}`) ||
+          /S5-H/i.test(t.reg || "")
+        );
+
+        if (isMilHeli) {
+          color = "#f43f5e"; // Military Helicopter Rose/Crimson
+          symbol = "🚁";
+        } else if (isFlarmGlider) {
           color = "#ffdd00"; // FLARM Glider Yellow
           symbol = "▲";
         } else if (isDrone) {
@@ -286,10 +296,22 @@ export const AsterixCadRadarScope: React.FC<{
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.shadowColor = color;
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = isMilHeli ? 10 : 6;
 
-        ctx.font = "bold 13px monospace";
-        ctx.fillText(symbol, s.x - 5, s.y + 5);
+        ctx.font = isMilHeli ? "14px sans-serif" : "bold 13px monospace";
+        ctx.fillText(symbol, s.x - (isMilHeli ? 8 : 5), s.y + 5);
+
+        // Pulsing tactical ring for military helicopters
+        if (isMilHeli) {
+          ctx.save();
+          ctx.strokeStyle = "#f43f5e";
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 14, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
 
         // Velocity Vector Lead Line (Ground Track)
         const trk = (t.track || 0);
@@ -308,7 +330,7 @@ export const AsterixCadRadarScope: React.FC<{
         ctx.shadowBlur = 0;
         ctx.font = "10px 'Share Tech Mono', monospace";
         const callsign = t.callsign || t.flight || t.hex?.toUpperCase() || "UNKNOWN";
-        const fl = t.altFt ? `FL${Math.round(t.altFt / 100).toString().padStart(3, "0")}` : "GND";
+        const fl = t.altFt ? `FL${Math.round(t.altFt / 100).toString().padStart(3, "0")}` : isMilHeli ? "800FT" : "GND";
         const spd = Math.round(gs);
 
         // Data block text box
@@ -320,10 +342,14 @@ export const AsterixCadRadarScope: React.FC<{
 
         ctx.fillStyle = color;
         ctx.fillText(callsign, s.x + 14, s.y - 6);
-        ctx.fillStyle = "#cbd5e1";
+        ctx.fillStyle = isMilHeli ? "#fca5a5" : "#cbd5e1";
         ctx.fillText(`${fl}  ${spd}KT`, s.x + 14, s.y + 8);
 
-        if (t.isLjmsGateway) {
+        if (isMilHeli) {
+          ctx.fillStyle = "#f43f5e";
+          ctx.font = "bold 8px monospace";
+          ctx.fillText("🎖️ MIL", s.x + 62, s.y - 6);
+        } else if (t.isLjmsGateway) {
           ctx.fillStyle = "#ffdd00";
           ctx.font = "bold 8px monospace";
           ctx.fillText("⚡ LJMS OGN", s.x + 58, s.y - 6);
@@ -638,6 +664,27 @@ export const AsterixCadRadarScope: React.FC<{
                   <span style={{ color: "#94a3b8" }}>GROUND SPEED / TRACK:</span>
                   <b>{Math.round(selectedTarget.speedKnots || selectedTarget.speed || 0)} KT @ {Math.round(selectedTarget.track || 0)}°</b>
                 </div>
+
+                {/* Military / Tactical Asset Card */}
+                {(selectedTarget.isMil || /RANGR|LSV|SVN|506e6/i.test(`${selectedTarget.callsign || selectedTarget.flight || ""} ${selectedTarget.hex || ""}`) || /S5-H/i.test(selectedTarget.reg || "")) && (
+                  <div style={{ background: "rgba(244, 63, 94, 0.12)", border: "1px solid #f43f5e", padding: "8px 10px", borderRadius: "4px", marginTop: "4px" }}>
+                    <div style={{ color: "#f43f5e", fontWeight: 800, fontSize: "11px", marginBottom: "4px" }}>
+                      🎖️ MILITARY / POLICE TACTICAL TARGET
+                    </div>
+                    <div style={{ color: "#fecdd3", fontSize: "11px" }}>
+                      UNIT: <b>{selectedTarget.ownOp || "Slovenska vojska / Policija"}</b>
+                    </div>
+                    <div style={{ color: "#fecdd3", fontSize: "11px" }}>
+                      AIRFRAME: <b>{selectedTarget.model || "Bell 206 JetRanger"}</b> · REG: <b>{selectedTarget.reg || "S5-HZJ"}</b>
+                    </div>
+                    <div style={{ color: "#38bdf8", fontSize: "11px", marginTop: "4px" }}>
+                      PCL ROTOR CHOP: <b>13.1 Hz</b> (2-blade @ 394 RPM) · Spread ±140 Hz
+                    </div>
+                    <div style={{ color: "#38bdf8", fontSize: "11px" }}>
+                      ILLUMINATOR: <b>RTV Trdinov Vrh (90.9 MHz, 100 kW ERP)</b>
+                    </div>
+                  </div>
+                )}
                 {selectedTarget.receiverStation && (
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span style={{ color: "#94a3b8" }}>RECEIVER GATEWAY:</span>
