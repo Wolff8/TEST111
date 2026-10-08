@@ -13,6 +13,7 @@ export function App() {
           <Route path="/data" element={<OpsPage view="data" />} />
           <Route path="/b2b" element={<OpsPage view="b2b" />} />
           <Route path="/spotting" element={<OpsPage view="spotting" />} />
+          <Route path="/cyber" element={<OpsPage view="cyber" />} />
         </Routes>
         <Nav />
       </div>
@@ -29,6 +30,7 @@ function Nav() {
     { to: "/data", lab: "Data", ic: "▤" },
     { to: "/b2b", lab: "B2B / FPL", ic: "⇄" },
     { to: "/spotting", lab: "Spotting / Mil", ic: "🔭" },
+    { to: "/cyber", lab: "Cyber OSINT", ic: "🛡️" },
   ];
   return (
     <nav className="tabbar" aria-label="dashboards">
