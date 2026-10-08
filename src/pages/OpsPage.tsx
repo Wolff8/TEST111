@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
 import { LiveBoardMap, type MapOverlay, type RainSnap } from "../components/LiveBoardMap";
 import { AsterixRadarScope } from "../components/AsterixRadarScope";
+import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -27,7 +28,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -149,7 +150,10 @@ export function OpsPage(props: { view: View }) {
   const [dataLayer, setDataLayer] = useState<DataLayer>("all");
   const [live, setLive] = useState<Msg[]>([]);
   const [sheet, setSheet] = useState(false);
-  const [radarScopeMode, setRadarScopeMode] = useState(true);
+  const [radarScopeMode, setRadarScopeMode] = useState(false);
+  const [dronetagOps, setDronetagOps] = useState<any[]>([]);
+  const [notamsData, setNotamsData] = useState<any[]>([]);
+  const [weatherData, setWeatherData] = useState<any[]>([]);
   const [feeder, setFeeder] = useState<SdrFeeder | null>(null);
   const [wigle, setWigle] = useState<WigleSnap | null>(null);
   const [rf, setRf] = useState<RfSnap | null>(null);
@@ -500,6 +504,36 @@ export function OpsPage(props: { view: View }) {
   }, [view]);
 
   useEffect(() => {
+    let stop = false;
+    const pullAviationFeeds = () => {
+      void fetch("/api/dronetag/operations")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!stop && Array.isArray(d?.operations)) setDronetagOps(d.operations);
+        })
+        .catch(() => {});
+      void fetch("/api/aviation/notams")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!stop && Array.isArray(d?.notams)) setNotamsData(d.notams);
+        })
+        .catch(() => {});
+      void fetch("/api/aviation/weather")
+        .then((r) => r.json())
+        .then((d) => {
+          if (!stop && Array.isArray(d?.stations)) setWeatherData(d.stations);
+        })
+        .catch(() => {});
+    };
+    pullAviationFeeds();
+    const t = window.setInterval(pullAviationFeeds, 45_000);
+    return () => {
+      stop = true;
+      window.clearInterval(t);
+    };
+  }, []);
+
+  useEffect(() => {
     if (view !== "data") return;
     let stop = false;
     const pull = () => {
@@ -800,7 +834,9 @@ export function OpsPage(props: { view: View }) {
             : "Slovenia passive radar"
           : view === "data"
             ? "Data"
-            : "Operations";
+            : view === "b2b"
+              ? "B2B / FPL"
+              : "Operations";
   const note =
     view === "lora"
       ? lora?.note
@@ -1241,7 +1277,7 @@ export function OpsPage(props: { view: View }) {
               marginLeft: "8px",
             }}
           >
-            {radarScopeMode ? "MODE: ASTERIX PPI SCOPE" : "MODE: GEOGRAPHIC MAP"}
+            {radarScopeMode ? "MODE: CRT PPI SCOPE" : "MODE: INTERACTIVE MAP (ASTERIX CAD)"}
           </button>
         ) : null}
         <span>
@@ -1260,7 +1296,7 @@ export function OpsPage(props: { view: View }) {
         ) : null}
       </header>
 
-      {view === "data" ? null : (
+      {view === "data" || view === "b2b" ? null : (
       <div className="chips" role="tablist" aria-label="region">
         {PLACES.map((p) => (
           <button key={p.id} type="button" className={place === p.id ? "on" : ""} onClick={() => setPlace(p.id)}>
@@ -1382,7 +1418,17 @@ export function OpsPage(props: { view: View }) {
       {view === "data" && dataLayer === "catalog" ? <MsSdrHowto rf={rf} /> : null}
       {view === "data" && dataLayer === "catalog" ? <WigleHowto wigle={wigle} /> : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : (
+      {view === "b2b" ? (
+        <B2BExchangeDashboard
+          planes={mapPlanes}
+          onPinpointPlane={(planeId) => {
+            setPick(planeId);
+            window.location.hash = "#/radar";
+          }}
+        />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1421,6 +1467,9 @@ export function OpsPage(props: { view: View }) {
             radio={view === "radar" ? radar?.radio || null : null}
             rain={rain}
             showRain={wxOn && (view === "radar" || view === "data")}
+            dronetagOps={dronetagOps}
+            notams={notamsData}
+            weather={weatherData}
           />
         )}
         {wxOn && (view === "radar" || view === "data") && rain?.now ? (
@@ -1430,20 +1479,25 @@ export function OpsPage(props: { view: View }) {
           </span>
         ) : null}
         {mapFull && !(view === "radar" && radarScopeMode) ? <div className="map-chrome">{chrome}</div> : null}
-        {pickedPlane ? (
+        {pickedPlane && !(view === "radar" && radarScopeMode) ? (
           <div className="map-hud ac">
-            <PlaneHud p={pickedPlane} title={trackLabel(pickedPlane)} />
+            <PlaneHud p={pickedPlane} title={trackLabel(pickedPlane)} onClose={() => setPick("")} />
           </div>
         ) : view === "data" && pickedData ? (
           <DataHud row={pickedData} onClose={() => setPick("")} />
         ) : view !== "radar" && view !== "data" && picked ? (
           <div className="map-hud">
-            <strong>{labelOf(picked)}</strong>
-            <small>
-              {"kind" in picked ? (picked as Sensor).kind : pickedMesh?.port || "node"}
-              {pickedMesh?.alt ? ` · ${Math.round(pickedMesh.alt)} m` : ""}
-              {"lat" in picked && picked.lat ? ` · ${Number(picked.lat).toFixed(3)}, ${Number(picked.lon).toFixed(3)}` : ""}
-            </small>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px", marginBottom: "4px" }}>
+              <div>
+                <strong>{labelOf(picked)}</strong>
+                <small>
+                  {"kind" in picked ? (picked as Sensor).kind : pickedMesh?.port || "node"}
+                  {pickedMesh?.alt ? ` · ${Math.round(pickedMesh.alt)} m` : ""}
+                  {"lat" in picked && picked.lat ? ` · ${Number(picked.lat).toFixed(3)}, ${Number(picked.lon).toFixed(3)}` : ""}
+                </small>
+              </div>
+              <button type="button" className="hud-ctrl-btn close" onClick={() => setPick("")} title="Close window">✕</button>
+            </div>
             {pickedMesh || (picked as Sensor).battery != null ? (
               <TelemetryHud n={(pickedMesh || picked) as Sensor} />
             ) : (
@@ -1473,6 +1527,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
+      {view === "b2b" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">
@@ -1658,6 +1713,7 @@ export function OpsPage(props: { view: View }) {
         </section>
       ) : null}
       </div>
+      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ import { fetchEurofplCode } from "./eurofpl-feed.mjs";
 import { applyLiveRoutes, startLiveRoutePump, listLiveRoutes, liveRouteStatus, FPL_ROUTE_API } from "./fpl-feed.mjs";
 import { fetchArrivals, isSiArrival, FIDS_LJU, OPENSKY_ARRIVAL, HUBS } from "./arrivals-feed.mjs";
 import { fetchMetBoard, AWC_METAR, AWC_ISIGMET, METEOALARM_SI } from "./met-feed.mjs";
-import { probeRidCatalog, recognizeDjiRid, RID_CATALOG, RID_VERIFIER_YAML, RID_DRONESCOUT, RID_DRONETAG_LIVE, RID_ESP32, DJI_FEEDBACK_CFG, DJI_ACCOUNT } from "./rid-feed.mjs";
+import { probeRidCatalog, recognizeDjiRid, decodeOpenDroneIdBytes, RID_CATALOG, RID_VERIFIER_YAML, RID_DRONESCOUT, RID_DRONETAG_LIVE, RID_ESP32, DJI_FEEDBACK_CFG, DJI_ACCOUNT } from "./rid-feed.mjs";
 import { fetchUavPublic, inUavTheater, isUavAircraft, ognAgeSec, ognMaxAgeSec, UAV_OGN, UAV_BOX } from "./uav-feed.mjs";
 import { ULTRAFEEDER_REPO, ULTRAFEEDER_IMAGE, PLANE_ALERT_DB, TAT_GLOBE, OPENDATA_REPO, fetchUltrafeederPublic, otherwiseInvisibleSky, isIdentifiedAdsb, isFeederLeftover, inSiTheater, SI_BOX, IT_HUB, HELI_TYPE_RE, isHeliRow, isSiMilHeli, RAKICAN_PAD, inRakicanPad } from "./ultrafeeder-feed.mjs";
 import { fetchBirdPublic, VOGEL_SITE, VOGEL_RADAR, VOGEL_BIRDS } from "./bird-feed.mjs";
@@ -54,6 +54,79 @@ import {
   fetchRainViewerRadar,
   fetchTatGlobeCentralEurope,
 } from "./aviation-live-feed.mjs";
+import { startOgnClient, getOgnLiveTargets, getOgnStats } from "./ogn-live-feed.mjs";
+import { startDronetagClient, getDronetagLiveTargets, getDronetagStats, getDronetagOperations } from "./dronetag-live-feed.mjs";
+import { startOpenSkyPoller, getOpenSkyLiveTargets, getOpenSkyStats } from "./opensky-live-feed.mjs";
+import {
+  fetchEurocontrolSituation,
+  fetchEurocontrolTraffic,
+  fetchEurocontrolDelays,
+  fetchLiveRouteForCallsign,
+  validateIcaoFlightPlan,
+  getB2BStatus,
+} from "./b2b-feed.mjs";
+import {
+  ACI_BB_LAYOUT,
+  ACI_SITE,
+  AEROPUS_KENDO,
+  AEROPUS_SITE,
+  AIRM_BOOTSTRAP,
+  AIRM_MODELS,
+  AIRM_SITE,
+  AIRM_TITLE,
+  AIRM_URL,
+  AIS_DEF,
+  AMAN_JSON,
+  AMAN_META,
+  AMC_ANON,
+  AMC_ANON_TITLE,
+  AMC_COMM,
+  AMC_DNN,
+  AMC_LOGON,
+  AMC_MAPS,
+  AMC_SITE,
+  AMC_WORKAREAS,
+  CF_BEACON,
+  CHROME_SCRIPTS,
+  CROCONTROL_JQ,
+  CROCONTROL_SITE,
+  EASA_MAIN,
+  EASA_SITE,
+  EATM_META,
+  EATM_PORTAL,
+  EATM_STAKEHOLDERS,
+  EATM_STAKEHOLDER_URL,
+  EC_FOOTER_JS,
+  EC_FOOTER_LIBS,
+  EC_SITE,
+  OGC_SITE,
+  OGC_WFS_TE,
+  OGC_WFS_TE_CAT,
+  OGC_WFS_TE_DATE,
+  OGC_WFS_TE_DOC,
+  OGC_WFS_TE_TITLE,
+  OPENATM_JSON,
+  OPENATM_META,
+  PRISM_CDN,
+  PRISM_SITE,
+  RTCA_AJAX,
+  RTCA_SITE,
+  SKYBRARY_DIALOG,
+  SKYBRARY_GTAG_AJAX,
+  SWIM_CATALOG,
+  SWIM_PUBLIC_LIVE,
+  SWIM_REF,
+  SWIM_REGISTRY,
+  SWIM_SCHEMA,
+  probeAirm,
+  probeAisDef,
+  probeAmanJson,
+  probeChromeScript,
+  probeChromeScripts,
+  probeEatmStakeholder,
+  probeOpenAtmJson,
+  probeSwim,
+} from "./swim-feed.mjs";
 
 try {
   const envTxt = readFileSync(new URL("./.env", import.meta.url), "utf8");
@@ -629,6 +702,10 @@ const ridTracks = new Map();
 const sdrTracks = new Map();
 const fplTracks = new Map();
 const sdrFeed = createSdrFeed(sdrTracks, () => {});
+// Initialize 100% real live feeds: OGN APRS-IS (gliders/UAVs), Dronetag Socket.io (RID), OpenSky SSR (radar states)
+startOgnClient();
+startDronetagClient();
+startOpenSkyPoller();
 const rfTracks = new Map();
 const wigleFeed = createWigleFeed(rfTracks, () => cache.sensors.clear());
 const wbTracks = new Map();
@@ -1355,7 +1432,41 @@ function ridCandidates(body) {
 }
 
 function parseRidRow(raw) {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw) return null;
+  if (typeof raw === "string" && /^[0-9a-fA-F]{50,}$/.test(raw.trim())) {
+    const bin = decodeOpenDroneIdBytes(Buffer.from(raw.trim(), "hex"));
+    if (bin) return parseRidRow(bin);
+  }
+  if (typeof raw === "object" && typeof raw.hex === "string" && raw.hex.length >= 50) {
+    const bin = decodeOpenDroneIdBytes(Buffer.from(raw.hex.replace(/[^0-9a-fA-F]/g, ""), "hex"));
+    if (bin) return parseRidRow(bin);
+  }
+  if (typeof raw !== "object") return null;
+
+  if (raw.serial && Number.isFinite(raw.lat) && Number.isFinite(raw.lon)) {
+    const cleanSerial = String(raw.serial).replace(/[^a-z0-9]/gi, "").trim();
+    const id = `rid-${cleanSerial.slice(-12).toLowerCase()}`;
+    const tail = cleanSerial.slice(-4).toUpperCase() || "RID";
+    const recognized = recognizeDjiRid({ serial: cleanSerial, model: raw.model, text: raw.selfText });
+    return {
+      id,
+      serial: cleanSerial,
+      call: recognized.dji ? `DJI${tail}` : tail,
+      model: recognized.model || raw.model || "Remote ID UAS",
+      dji: recognized.dji,
+      lat: raw.lat,
+      lon: raw.lon,
+      altM: raw.altM ?? 0,
+      gsKt: (raw.speedMps ?? (raw.gsKt ? raw.gsKt / 1.94384 : 0)) * 1.94384,
+      track: raw.track ?? 0,
+      rssi: raw.rssi ?? null,
+      opLat: Number.isFinite(raw.opLat) && Math.abs(raw.opLat) > 0.2 ? raw.opLat : null,
+      opLon: Number.isFinite(raw.opLon) && Math.abs(raw.opLon) > 0.2 ? raw.opLon : null,
+      homeLat: Number.isFinite(raw.homeLat) ? raw.homeLat : null,
+      homeLon: Number.isFinite(raw.homeLon) ? raw.homeLon : null,
+      at: Date.now(),
+    };
+  }
   const data = raw.data && typeof raw.data === "object" ? raw.data : {};
   const loc = raw["Location/Vector Message"] || raw["Location/Vector"] || raw.location || raw.Location || data.location || raw;
   const sys = raw["System Message"] || raw.system || raw.System || data.system || {};
@@ -1755,6 +1866,103 @@ function ingestRidTracks(byId, p) {
   }
 }
 
+function ingestOgnLiveTracks(byId, p) {
+  const ognLive = getOgnLiveTargets();
+  for (const o of ognLive) {
+    if (!o.lat || !o.lon) continue;
+    if (byId.has(o.hex)) {
+      const prev = byId.get(o.hex);
+      if (prev && !prev.heard) {
+        prev.lat = o.lat;
+        prev.lon = o.lon;
+        if (o.altFt) prev.altFt = o.altFt;
+        if (o.speedKnots) prev.gs = o.speedKnots;
+        if (o.track) prev.track = o.track;
+      }
+      continue;
+    }
+    ingestPlane(
+      byId,
+      {
+        hex: o.hex,
+        flight: o.callsign || o.hex.toUpperCase(),
+        lat: o.lat,
+        lon: o.lon,
+        alt_geom: o.altFt,
+        gs: o.speedKnots,
+        track: o.track,
+        category: o.isDrone ? "B6" : o.isGlider ? "B1" : "A1",
+        type: o.isDrone ? "rid" : "ogn",
+        src: o.isDrone ? "rid" : "ogn",
+        role: o.isDrone ? "uav" : o.isGlider ? "glider" : "small",
+        model: o.isDrone ? "UAV (OGN Remote ID)" : o.isGlider ? "Glider / FLARM" : "General Aviation",
+      },
+      p,
+    );
+  }
+}
+
+function ingestDronetagTracks(byId, p) {
+  const drones = getDronetagLiveTargets();
+  for (const d of drones) {
+    if (!d.lat || !d.lon) continue;
+    if (byId.has(d.hex)) continue;
+    ingestPlane(
+      byId,
+      {
+        hex: d.hex,
+        flight: d.callsign,
+        r: d.sensorId,
+        t: "UAV",
+        lat: d.lat,
+        lon: d.lon,
+        alt_geom: d.altFt,
+        gs: d.speedKnots,
+        track: d.track,
+        type: "rid",
+        category: "B6",
+        src: "rid",
+        role: "uav",
+        uaId: d.sensorId,
+        model: d.manufacturer || "Remote ID UAS",
+        seen: Math.round((Date.now() - d.seenAt) / 1000),
+      },
+      p,
+    );
+  }
+}
+
+function ingestOpenSkyTracks(byId, p) {
+  const osTracks = getOpenSkyLiveTargets();
+  for (const os of osTracks) {
+    if (!os.lat || !os.lon) continue;
+    const prev = byId.get(os.hex);
+    if (prev) {
+      if (os.squawk && !prev.squawk) prev.squawk = os.squawk;
+      if (os.altFt && !prev.altFt) prev.altFt = os.altFt;
+      continue;
+    }
+    ingestPlane(
+      byId,
+      {
+        hex: os.hex,
+        flight: os.callsign,
+        lat: os.lat,
+        lon: os.lon,
+        alt_geom: os.altFt,
+        gs: os.speedKnots,
+        track: os.track,
+        squawk: os.squawk,
+        src: "opensky",
+        category: "A3",
+        role: "jet",
+        country: os.originCountry,
+      },
+      p,
+    );
+  }
+}
+
 function readBody(req, limit = 800_000) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -1885,6 +2093,9 @@ async function buildRadar(place) {
   }
   ingestMeshAirborne(byId, p);
   ingestRidTracks(byId, p);
+  ingestOgnLiveTracks(byId, p);
+  ingestDronetagTracks(byId, p);
+  ingestOpenSkyTracks(byId, p);
   for (const a of birdBoard.tagged || []) ingestPlane(byId, a, p);
   for (const a of birdBoard.flocks || []) ingestPlane(byId, a, p);
   const keptEchoes = [];
@@ -3431,13 +3642,38 @@ const httpServer = createServer(async (req, res) => {
             { id: "adsbfi", name: "adsb.fi Public Feeds", type: "ADS-B & Military", status: "active", endpoint: "https://opendata.adsb.fi/api/v3" },
             { id: "adsblol", name: "adsb.lol Open Data", type: "ADS-B & UAV", status: "active", endpoint: "https://api.adsb.lol" },
             { id: "sondehub", name: "SondeHub Radiosonde Telemetry v2", type: "Weather Balloons (RS41/iMS-100)", status: "active", endpoint: "https://api.v2.sondehub.org/sondes/telemetry" },
-            { id: "ogn", name: "Open Glider Network (OGN)", type: "Gliders & Drones", status: "active", endpoint: "http://aprs.glidernet.org:14501" },
+            { id: "ogn", name: "Open Glider Network (OGN Live APRS-IS)", type: "Gliders, FLARM & Drones", status: "active", endpoint: "aprs.glidernet.org:14580" },
+            { id: "dronetag", name: "Dronetag Cloud Live Remote ID & Direct RID", type: "Direct RID & Network RID Drones", status: "active", endpoint: "https://api.dronetag.app/v2/airspace/socket.io" },
             { id: "ttn", name: "The Things Network Packet Broker", type: "LoRaWAN Gateways", status: "active", endpoint: "https://mapper.packetbroker.net/api/v2" },
             { id: "rainviewer", name: "RainViewer Meteorological Radar Composite", type: "Precipitation Radar", status: "active", endpoint: "https://api.rainviewer.com/public/weather-maps.json" },
             { id: "liveatc", name: "LiveATC.net Regional ATC Audio Streams", type: "Air Traffic Radio", status: "active", endpoint: "https://www.liveatc.net" },
           ],
         }),
       );
+      return;
+    }
+
+    if (url.pathname === "/api/ogn/live") {
+      res.writeHead(200, cors);
+      res.end(JSON.stringify({ ok: true, stats: getOgnStats(), targets: getOgnLiveTargets() }));
+      return;
+    }
+
+    if (url.pathname === "/api/dronetag/live") {
+      res.writeHead(200, cors);
+      res.end(JSON.stringify({ ok: true, stats: getDronetagStats(), targets: getDronetagLiveTargets() }));
+      return;
+    }
+
+    if (url.pathname === "/api/dronetag/operations") {
+      res.writeHead(200, cors);
+      res.end(JSON.stringify({ ok: true, count: getDronetagOperations().length, operations: getDronetagOperations() }));
+      return;
+    }
+
+    if (url.pathname === "/api/opensky/live") {
+      res.writeHead(200, cors);
+      res.end(JSON.stringify({ ok: true, stats: getOpenSkyStats(), targets: getOpenSkyLiveTargets() }));
       return;
     }
     if (url.pathname === "/api/rf" || url.pathname === "/api/wideband" || url.pathname === "/api/ms-sdr") {
@@ -3631,6 +3867,79 @@ const httpServer = createServer(async (req, res) => {
           ],
         },
       });
+      return;
+    }
+    if (url.pathname === "/api/b2b/situation") {
+      try {
+        const force = url.searchParams.get("force") === "1";
+        const data = await fetchEurocontrolSituation(force);
+        sendJson(req, res, { ok: true, ...data });
+      } catch (e) {
+        res.writeHead(502, cors);
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/b2b/traffic") {
+      try {
+        const force = url.searchParams.get("force") === "1";
+        const data = await fetchEurocontrolTraffic(force);
+        sendJson(req, res, { ok: true, ...data });
+      } catch (e) {
+        res.writeHead(502, cors);
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/b2b/delays") {
+      try {
+        const force = url.searchParams.get("force") === "1";
+        const data = await fetchEurocontrolDelays(force);
+        sendJson(req, res, { ok: true, ...data });
+      } catch (e) {
+        res.writeHead(502, cors);
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/b2b/route") {
+      try {
+        const callsign = url.searchParams.get("callsign");
+        if (!callsign) {
+          res.writeHead(400, cors);
+          res.end(JSON.stringify({ ok: false, error: "Missing callsign parameter" }));
+          return;
+        }
+        const data = await fetchLiveRouteForCallsign(callsign);
+        sendJson(req, res, { ok: true, found: !!data, route: data });
+      } catch (e) {
+        res.writeHead(502, cors);
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/b2b/validate-fpl") {
+      try {
+        let fplText = url.searchParams.get("fpl") || "";
+        if (req.method === "POST" || req.method === "PUT") {
+          const raw = (await readBody(req, 80_000)) || "";
+          try {
+            const j = JSON.parse(raw);
+            fplText = j.fpl || j.text || j.flightPlan || raw;
+          } catch {
+            fplText = raw;
+          }
+        }
+        const result = validateIcaoFlightPlan(fplText);
+        sendJson(req, res, { ok: true, ...result });
+      } catch (e) {
+        res.writeHead(400, cors);
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/b2b/status") {
+      sendJson(req, res, { ok: true, ...getB2BStatus() });
       return;
     }
     if (url.pathname === "/api/eurofpl" || url.pathname === "/api/fpl" || url.pathname === "/api/fpl-live" || url.pathname === "/api/routes") {
@@ -4345,6 +4654,25 @@ function startSdrFeed() {
   if (beastHost) {
     sdrFeed.connect(beastHost, Number(process.env.SDR_BEAST_PORT || 30005));
   }
+  // Connect to local SDR raw stream (fed by remote SDRangel via port 3000)
+  const connectLocalSdr = () => {
+    import("node:http").then(({ default: http }) => {
+      const req = http.get("http://127.0.0.1:3000/api/sdr/raw", (res) => {
+        if (res.statusCode === 200) {
+          res.on("data", (chunk) => {
+            sdrFeed.ingestRaw(chunk, "application/octet-stream", "puconci");
+            expireMap(sdrTracks);
+          });
+          res.on("close", () => setTimeout(connectLocalSdr, 3000));
+        } else {
+          setTimeout(connectLocalSdr, 5000);
+        }
+      });
+      req.on("error", () => setTimeout(connectLocalSdr, 5000));
+    });
+  };
+  connectLocalSdr();
+
   const feed = process.env.SDR_FEED_URL || process.env.SDR_JSON_URL || "";
   if (!feed) return;
   const pull = async () => {

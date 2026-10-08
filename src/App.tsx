@@ -11,6 +11,7 @@ export function App() {
           <Route path="/sensors" element={<OpsPage view="sensors" />} />
           <Route path="/radar" element={<OpsPage view="radar" />} />
           <Route path="/data" element={<OpsPage view="data" />} />
+          <Route path="/b2b" element={<OpsPage view="b2b" />} />
         </Routes>
         <Nav />
       </div>
@@ -25,6 +26,7 @@ function Nav() {
     { to: "/sensors", lab: "Sensors", ic: "◉" },
     { to: "/radar", lab: "Radar", ic: "✈" },
     { to: "/data", lab: "Data", ic: "▤" },
+    { to: "/b2b", lab: "B2B / FPL", ic: "⇄" },
   ];
   return (
     <nav className="tabbar" aria-label="dashboards">
