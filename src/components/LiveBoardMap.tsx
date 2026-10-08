@@ -102,6 +102,14 @@ export const RADAR_STATIONS: Record<RadarStationId, RadarStation> = {
   },
 };
 
+export const PCL_ILLUMINATOR_COORDS: Record<string, { lat: number; lon: number; name: string; freq: number }> = {
+  "trdinov-vrh-fm": { lat: 45.7836, lon: 15.3678, name: "RTV Trdinov Vrh (Gorjanci)", freq: 90.9 },
+  "kum-fm": { lat: 46.1089, lon: 15.0747, name: "RTV Kum (Zasavje)", freq: 91.1 },
+  "sljeme-fm": { lat: 45.9000, lon: 15.9481, name: "HRT Sljeme (Zagreb)", freq: 89.7 },
+  "krvavec-fm": { lat: 46.2975, lon: 14.5342, name: "RTV Krvavec (Gorenjska)", freq: 91.8 },
+  "maribor-pohorje-fm": { lat: 46.5161, lon: 15.5878, name: "RTV Pohorje (Štajerska)", freq: 88.5 },
+};
+
 export function calcPolar(origin: { lat: number; lon: number }, lat: number, lon: number) {
   const φ1 = (origin.lat * Math.PI) / 180;
   const φ2 = (lat * Math.PI) / 180;
@@ -177,11 +185,17 @@ export type WeatherStation = {
 };
 
 function planeMark(p: Plane, on: boolean, label: boolean, colorByAlt = true) {
+  const isMilHeli = typeof p !== "string" && (
+    p.isMil ||
+    (p.role === "heli" && (/RANGR|LSV|SVN|506e6/i.test(`${p.flight || ""} ${p.id || ""}`) || /S5-H/i.test(p.reg || "")))
+  );
   const alt = Number(p.altFt) || 0;
   const altC = altColor(alt);
-  const col = colorByAlt
-    ? altC
-    : isDji(p)
+  const col = isMilHeli
+    ? "#f43f5e"
+    : colorByAlt
+      ? altC
+      : isDji(p)
       ? "#ff8a3d"
       : p.role === "uav"
         ? "#ff8a3d"
@@ -209,7 +223,7 @@ function planeMark(p: Plane, on: boolean, label: boolean, colorByAlt = true) {
 
   const flText = alt >= 5500 ? `FL${Math.round(alt / 100)}` : `${alt}′`;
   const csLabel = label && p.role !== "bird" && p.role !== "echo"
-    ? `<b class="cs" style="border-left: 2px solid ${col}">${callsign(p)}${on || label ? ` <span style="color:${altC};font-weight:400">${flText}</span>` : ""}</b>`
+    ? `<b class="cs" style="border-left: 2px solid ${col}">${isMilHeli ? `<span style="color:#f43f5e;font-size:9px;margin-right:2px">🎖️</span>` : ""}${callsign(p)}${on || label ? ` <span style="color:${isMilHeli ? "#fca5a5" : altC};font-weight:400">${flText}</span>` : ""}</b>`
     : "";
 
   return `<span class="ac-mark ${on ? "on" : ""} ${label ? "" : "bare"} ${isUid(p) ? "uid" : ""} ${p.heard ? "heard" : ""} ${p.nm || p.src === "nm" ? "nm" : ""} ${p.fpl || p.ifps || p.src === "fpl" ? "fpl" : ""} ${p.role} ${isFlock(p) ? "flock" : ""} ${isDji(p) ? "dji" : ""} ${isFlarm(p) ? "flarm" : ""}">${planeSvg(p, col)}${csLabel}</span>`;
@@ -233,7 +247,16 @@ function planeSvg(p: Plane | string, color?: string) {
     return `<span class="ac uav dji" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="10" cy="10" r="5" fill="none" stroke="${c}" stroke-width="1.6"/><circle cx="30" cy="10" r="5" fill="none" stroke="${c}" stroke-width="1.6"/><circle cx="10" cy="30" r="5" fill="none" stroke="${c}" stroke-width="1.6"/><circle cx="30" cy="30" r="5" fill="none" stroke="${c}" stroke-width="1.6"/><path d="M10 10 30 30M30 10 10 30" stroke="${c}" stroke-width="1.8"/><rect x="15" y="15" width="10" height="10" rx="2" fill="${c}"/></svg></span>`;
   }
   if (role === "heli") {
-    return `<span class="ac heli" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="13" cy="13" r="8" fill="none" stroke="${c}" stroke-width="1.7"/><path d="M13 5v16M5 13h16" stroke="${c}" stroke-width="1.3"/><path d="M13 15.2 29 21l-16-2.2z" fill="${c}"/><circle cx="13" cy="13" r="1.6" fill="${c}"/></svg></span>`;
+    const isMilHeli = typeof p !== "string" && (
+      p.isMil ||
+      /RANGR|LSV|SVN|506e6/i.test(`${p.flight || ""} ${p.id || ""}`) ||
+      /S5-H/i.test(p.reg || "") ||
+      p.ownOp === "Slovenska vojska" ||
+      p.ownOp === "Slovenska vojska / Policija"
+    );
+    const col = isMilHeli ? "#f43f5e" : c;
+    const milRing = isMilHeli ? `<circle cx="13" cy="13" r="12" fill="none" stroke="#f43f5e" stroke-width="1.8" stroke-dasharray="3 3" opacity=".9"/><circle cx="13" cy="13" r="15" fill="none" stroke="#f43f5e" stroke-width="0.8" opacity=".5"/>` : "";
+    return `<span class="ac heli${isMilHeli ? " mil-heli" : ""}" style="--c:${col};--r:${rot}deg"><svg viewBox="0 0 32 32" aria-hidden="true">${milRing}<circle cx="13" cy="13" r="8" fill="none" stroke="${col}" stroke-width="1.7"/><path d="M13 5v16M5 13h16" stroke="${col}" stroke-width="1.3"/><path d="M13 15.2 29 21l-16-2.2z" fill="${col}"/><circle cx="13" cy="13" r="1.6" fill="${col}"/></svg></span>`;
   }
   if (role === "small") {
     return `<span class="ac small" style="--c:${c};--r:${rot}deg"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="${c}" d="M16 3.2 19.2 18l-3.2-2-3.2 2zM6 14.2 16 11l10 3.2-10 1.2zM14.6 20 16 26.2 17.4 20z"/></svg></span>`;
@@ -361,6 +384,7 @@ export function LiveBoardMap(props: {
 
   // Modern interactive UI states
   const [showAsterixRadar, setShowAsterixRadar] = useState(true);
+  const [showPclRadar, setShowPclRadar] = useState(true);
   const [altColorMode, setAltColorMode] = useState(true);
   const [showDronetagOps, setShowDronetagOps] = useState(true);
   const [showNotamZones, setShowNotamZones] = useState(true);
@@ -378,11 +402,17 @@ export function LiveBoardMap(props: {
   const [hudPlane, setHudPlane] = useState<Plane | null>(null);
 
   const radarLayerRef = useRef<L.FeatureGroup | null>(null);
+  const pclLayerRef = useRef<L.FeatureGroup | null>(null);
   const dronetagLayerRef = useRef<L.FeatureGroup | null>(null);
   const notamLayerRef = useRef<L.FeatureGroup | null>(null);
   const weatherLayerRef = useRef<L.FeatureGroup | null>(null);
 
   const activeStation = RADAR_STATIONS[activeStationId];
+
+  // Count active PCL & rotor tracked targets
+  const pclTargetsCount = useMemo(() => {
+    return (props.planes || []).filter((p) => p.pclTelemetry || p.rotorSig || p.isMil).length;
+  }, [props.planes]);
 
   // Picked plane details
   const pickedPlane = useMemo(() => {
@@ -806,6 +836,98 @@ export function LiveBoardMap(props: {
     };
   }, [showWeatherStations, props.weather]);
 
+  // Passive Radar & PCL Multilateration Geometry Layer
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    pclLayerRef.current?.remove();
+    pclLayerRef.current = null;
+    if (!showPclRadar) return;
+
+    const g = L.featureGroup().addTo(map);
+    pclLayerRef.current = g;
+
+    const pclPlanes = (props.planes || []).filter((p) => p.pclTelemetry && p.lat && p.lon);
+    const addedIlluminators = new Set<string>();
+
+    for (const p of pclPlanes) {
+      const tel = p.pclTelemetry!;
+      const isPick = props.pick === p.id;
+      const col = p.isMil ? "#f43f5e" : "#06b6d4";
+
+      // 1. Bistatic reflection ellipse
+      if (tel.ellipsePoints && tel.ellipsePoints.length > 2) {
+        L.polygon(tel.ellipsePoints, {
+          color: col,
+          weight: isPick ? 2.2 : 1.2,
+          dashArray: "4 6",
+          opacity: isPick ? 0.85 : 0.45,
+          fillColor: col,
+          fillOpacity: isPick ? 0.08 : 0.02,
+          interactive: true,
+        })
+          .bindPopup(`
+            <div style="font-family:monospace;font-size:11px;color:#f8fafc;background:#0f172a;padding:8px;border-radius:4px;border:1px solid ${col};">
+              <b style="color:${col};">📡 PCL BISTATIC ISO-RANGE ELLIPSE</b><br/>
+              <b>Target:</b> ${p.flight || p.id} (${p.reg || "MIL"})<br/>
+              <b>Illuminator:</b> ${tel.illuminatorName} (${tel.freqMhz} MHz)<br/>
+              <b>Bistatic Range:</b> ${tel.bistaticRangeKm} km<br/>
+              <b>Bistatic Delay:</b> ${tel.bistaticDelayUs} µs<br/>
+              <b>Doppler Shift:</b> ${tel.dopplerHz} Hz<br/>
+              <b>Estimated RCS:</b> ${tel.estimatedRcsM2} m²<br/>
+              ${p.rotorSig ? `<b>Rotor Modulation:</b> ${p.rotorSig.helicopterName} (${p.rotorSig.bladePassingFreqHz} Hz BPF)` : ""}
+            </div>
+          `)
+          .addTo(g);
+      }
+
+      // 2. Draw Transmitter site if known
+      const txId = tel.illuminatorId || "";
+      const txInfo = txId ? PCL_ILLUMINATOR_COORDS[txId] : null;
+      if (txInfo && txId && !addedIlluminators.has(txId)) {
+        addedIlluminators.add(txId);
+        const txHtml = `
+          <div class="pcl-tx-blip" style="background:rgba(6,182,212,0.15);border:1px solid #06b6d4;border-radius:4px;padding:2px 6px;color:#22d3ee;font-size:9px;font-family:monospace;white-space:nowrap;box-shadow:0 0 10px rgba(6,182,212,0.4);">
+            📻 Tx: ${txInfo.name} <span style="color:#a5f3fc">${txInfo.freq} MHz</span>
+          </div>
+        `;
+        L.marker([txInfo.lat, txInfo.lon], {
+          icon: mkIcon(txHtml, "pcl-tx-wrap", 80),
+          zIndexOffset: 300,
+        })
+          .bindPopup(`<b>${txInfo.name}</b><br/>Frequency: ${txInfo.freq} MHz FM<br/>Passive Radar Illuminator of Opportunity`)
+          .addTo(g);
+      }
+
+      // 3. If target is selected or military, draw bistatic ray lines
+      if ((isPick || p.isMil) && txInfo && p.lat && p.lon) {
+        // Transmitter to Target
+        L.polyline([[txInfo.lat, txInfo.lon], [p.lat, p.lon]], {
+          color: col,
+          weight: 1.4,
+          dashArray: "3 6",
+          opacity: 0.65,
+          interactive: false,
+        }).addTo(g);
+
+        // Target to Cerklje LJCE receiver
+        const rxPos: [number, number] = [45.8999, 15.5303];
+        L.polyline([[p.lat, p.lon], rxPos], {
+          color: "#10b981",
+          weight: 1.4,
+          dashArray: "3 6",
+          opacity: 0.65,
+          interactive: false,
+        }).addTo(g);
+      }
+    }
+
+    return () => {
+      g.remove();
+      if (pclLayerRef.current === g) pclLayerRef.current = null;
+    };
+  }, [showPclRadar, props.planes, props.pick]);
+
   // Aircraft & Trails Updates
   useEffect(() => {
     const lg = layers.current;
@@ -1081,6 +1203,15 @@ export function LiveBoardMap(props: {
         >
           <span className="dot-ind" />
           📡 ASTX RADAR
+        </button>
+        <button
+          type="button"
+          className={`map-tool-btn ${showPclRadar ? "active" : ""}`}
+          onClick={() => setShowPclRadar(!showPclRadar)}
+          title="Passive Coherent Location & Bistatic Radar Reflections"
+        >
+          <span className="dot-ind" />
+          📻 PCL RADAR ({pclTargetsCount})
         </button>
         <button
           type="button"
