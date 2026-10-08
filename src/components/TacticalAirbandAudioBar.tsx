@@ -208,13 +208,53 @@ export const TacticalAirbandAudioBar: React.FC<{
     }
   };
 
-  // Trigger alert beep on incoming target detection
+  // Synthesize distinctive tactical military / helicopter radar lock chime
+  const playMilitaryTacticalChime = () => {
+    try {
+      const ctx = audioCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume();
+
+      const now = ctx.currentTime;
+      // Tone 1: 1046 Hz
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "sawtooth";
+      osc1.frequency.setValueAtTime(1046.5, now);
+      gain1.gain.setValueAtTime(0.06 * volume, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.12);
+
+      // Tone 2: 1567 Hz
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(1567.98, now + 0.12);
+      gain2.gain.setValueAtTime(0.08 * volume, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.28);
+    } catch {
+      // AudioContext policy
+    }
+  };
+
+  const prevMilRef = useRef<number>(0);
+
+  // Trigger alert chime on incoming military or unexpected target detection
   useEffect(() => {
-    const totalAlerts = unexpectedCount + militaryCount;
-    if (totalAlerts > prevAlertsRef.current && isPlaying && !isMuted) {
+    if (militaryCount > prevMilRef.current && isPlaying && !isMuted) {
+      playMilitaryTacticalChime();
+    } else if (unexpectedCount > prevAlertsRef.current && isPlaying && !isMuted) {
       playTacticalAlertBeep();
     }
-    prevAlertsRef.current = totalAlerts;
+    prevMilRef.current = militaryCount;
+    prevAlertsRef.current = unexpectedCount;
   }, [unexpectedCount, militaryCount, isPlaying, isMuted]);
 
   // Audio Playback Handler
