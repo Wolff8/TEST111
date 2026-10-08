@@ -15,6 +15,7 @@ export function App() {
           <Route path="/spotting" element={<OpsPage view="spotting" />} />
           <Route path="/cyber" element={<OpsPage view="cyber" />} />
           <Route path="/cad" element={<OpsPage view="cad" />} />
+          <Route path="/network" element={<OpsPage view="network" />} />
         </Routes>
         <Nav />
       </div>
@@ -33,6 +34,7 @@ function Nav() {
     { to: "/b2b", lab: "B2B / FPL", ic: "⇄" },
     { to: "/spotting", lab: "Spotting / Mil", ic: "🔭" },
     { to: "/cyber", lab: "Cyber OSINT", ic: "🛡️" },
+    { to: "/network", lab: "Wireshark", ic: "🦈" },
   ];
   return (
     <nav className="tabbar" aria-label="dashboards">
