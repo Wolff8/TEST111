@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { fmtAltM, fmtKmh, fmtLenKm, fpmToMs, ftToM, identLabel, ktToKmh, trailLenKm } from "../lib";
 
 export function Gauge(props: { label: string; value?: number | null; display?: number | string | null; unit?: string; max?: number; color?: string }) {
@@ -105,8 +106,10 @@ function srcOf(p: {
 export function PlaneHud({
   p,
   title,
+  onClose,
 }: {
   title: string;
+  onClose?: () => void;
   p: {
     id: string;
     src: string;
@@ -164,6 +167,27 @@ export function PlaneHud({
     asterix?: boolean;
     asterixCat?: string;
     noPos?: boolean;
+    isMil?: boolean;
+    rotorSig?: {
+      helicopterName: string;
+      blades: number;
+      nominalRpm: number;
+      bladePassingFreqHz: number;
+      bladeTipSpeedMps: number;
+      maxDopplerSpreadHz: number;
+      hermSnrDb: number;
+      modulationStatus: string;
+    } | null;
+    pclTelemetry?: {
+      illuminatorName: string;
+      freqMhz: number;
+      bistaticRangeKm: number;
+      bistaticDelayUs: number;
+      bistaticAngleDeg: number;
+      dopplerHz: number;
+      estimatedRcsM2: number;
+      isForwardScatter: boolean;
+    } | null;
   };
 }) {
   const vs = p.vs;
@@ -207,6 +231,17 @@ export function PlaneHud({
     rows.push(["Passive", "leftover CAT 048 · no receiver / no transponder"]);
   }
   if (p.jump) rows.push(["Drop", "LJMS jump ship · canopy only if OGN type 4 / B3"]);
+  if (p.isMil || /RANGR|LSV|SVN|506e6/i.test(`${p.flight} ${p.id}`)) {
+    rows.push(["Military", "🎖️ Slovenska vojska / Policija · Tactical Aircraft"]);
+  }
+  if (p.rotorSig) {
+    rows.push(["Rotor PCL", `${p.rotorSig.bladePassingFreqHz} Hz blade chop (${p.rotorSig.blades} blades @ ${p.rotorSig.nominalRpm} RPM)`]);
+    rows.push(["Micro-Doppler", `±${p.rotorSig.maxDopplerSpreadHz} Hz · Acoustic SNR +${p.rotorSig.hermSnrDb} dB (${p.rotorSig.helicopterName})`]);
+  }
+  if (p.pclTelemetry) {
+    rows.push(["PCL Ellipse", `${p.pclTelemetry.illuminatorName} (${p.pclTelemetry.freqMhz} MHz) · Bistatic Delay ${p.pclTelemetry.bistaticDelayUs} µs`]);
+    rows.push(["Bistatic Angle", `${p.pclTelemetry.bistaticAngleDeg}° · RCS +${p.pclTelemetry.estimatedRcsM2} m²`]);
+  }
   rows.push(["HDG", `${Math.round(((p.track % 360) + 360) % 360)}°`]);
   rows.push(["GS", fmtKmh(p.gs)]);
   if (p.altBaro && Math.abs(p.altBaro - p.altFt) > 40) rows.push(["Baro", fmtAltM(p.altBaro)]);
@@ -238,11 +273,45 @@ export function PlaneHud({
     rows.push(["Pilot", `${p.operator.lat.toFixed(4)}, ${p.operator.lon.toFixed(4)} · ${d.toFixed(1)} km`]);
   }
   if (p.home?.lat && p.home?.lon) rows.push(["Home", `${p.home.lat.toFixed(4)}, ${p.home.lon.toFixed(4)}`]);
+  const [minimized, setMinimized] = useState(false);
   const pills = [srcOf(p), p.role, p.asterixCat || "", p.fastLow ? "low fast" : p.low ? "low" : "", p.local ? "LJMS" : "", p.taxi ? "taxi" : "", p.onDeck && !p.taxi ? "on ground" : "", p.jump ? "jump ship" : "", p.heard ? "heard" : "", p.silent && !bird ? "no ident" : "", p.noPos ? "no fix" : "", p.touching ? "FMP volume" : "", p.dep && p.dest ? `${p.dep}→${p.dest}` : "", p.ifps ? "IFPS" : p.fpl ? "FPL" : "", p.nm ? "NM" : ""].filter(Boolean);
+
+  if (minimized) {
+    return (
+      <div className="hud-mini-strip">
+        <span className="min-label"><b>{title}</b> · {p.role} · {Math.round(altM)}m · {Math.round(gsKmh)}km/h</span>
+        <div className="min-btn-group">
+          <button type="button" className="hud-ctrl-btn" onClick={() => setMinimized(false)} title="Expand details">
+            ↗ EXPAND
+          </button>
+          {onClose && (
+            <button type="button" className="hud-ctrl-btn close" onClick={onClose} title="Close window">
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <strong>{title}</strong>
-      <small>{pills.join(" · ")}</small>
+      <div className="hud-card-topbar">
+        <div>
+          <strong style={{ color: "#3ee0c2", fontSize: "14px" }}>{title}</strong>
+          <small style={{ display: "block", color: "#8da4b8", fontSize: "10px" }}>{pills.join(" · ")}</small>
+        </div>
+        <div className="hud-btn-group">
+          <button type="button" className="hud-ctrl-btn" onClick={() => setMinimized(true)} title="Minimize window">
+            — MINIMIZE
+          </button>
+          {onClose && (
+            <button type="button" className="hud-ctrl-btn close" onClick={onClose} title="Close window">
+              ✕ CLOSE
+            </button>
+          )}
+        </div>
+      </div>
       <div className="hud-gauges">
         <Gauge
           label="ALT"
