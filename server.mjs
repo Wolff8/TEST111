@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import dgram from "node:dgram";
 import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
@@ -3999,6 +4000,62 @@ const httpServer = createServer(async (req, res) => {
     if (url.pathname === "/api/spotting/audio" || url.pathname === "/api/atc/live-audio") {
       sendJson(req, res, { ok: true, streams: EUROPEAN_AIRBAND_AUDIO_STREAMS });
       return;
+    }
+    if (url.pathname === "/api/atc/stream" || url.pathname === "/api/audio/stream") {
+      const streamId = url.searchParams.get("id") || "ljmb-twr";
+      const target = EUROPEAN_AIRBAND_AUDIO_STREAMS.find((s) => s.id === streamId) || EUROPEAN_AIRBAND_AUDIO_STREAMS[0];
+      const audioUrl = target?.streamUrl || target?.altStreamUrl;
+      if (!audioUrl) {
+        res.writeHead(404, cors);
+        res.end(JSON.stringify({ error: "Stream not found" }));
+        return;
+      }
+      try {
+        const controller = new AbortController();
+        req.on("close", () => controller.abort());
+        const upstream = await fetch(audioUrl, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "VHF-Airband-Monitor/2.0",
+            "Icy-MetaData": "1",
+          },
+        });
+        if (!upstream.ok || !upstream.body) {
+          if (target.altStreamUrl && target.altStreamUrl !== audioUrl) {
+            const altUpstream = await fetch(target.altStreamUrl, {
+              signal: controller.signal,
+              headers: { "User-Agent": "VHF-Airband-Monitor/2.0" },
+            });
+            if (altUpstream.ok && altUpstream.body) {
+              res.writeHead(200, {
+                ...cors,
+                "Content-Type": altUpstream.headers.get("content-type") || "audio/mpeg",
+                "Cache-Control": "no-cache, no-store",
+                Connection: "keep-alive",
+              });
+              Readable.fromWeb(altUpstream.body).pipe(res);
+              return;
+            }
+          }
+          res.writeHead(502, cors);
+          res.end(JSON.stringify({ error: `Upstream relay returned status ${upstream.status}` }));
+          return;
+        }
+        res.writeHead(200, {
+          ...cors,
+          "Content-Type": upstream.headers.get("content-type") || "audio/mpeg",
+          "Cache-Control": "no-cache, no-store",
+          Connection: "keep-alive",
+        });
+        Readable.fromWeb(upstream.body).pipe(res);
+        return;
+      } catch (err) {
+        if (!res.headersSent) {
+          res.writeHead(502, cors);
+          res.end(JSON.stringify({ error: "Failed to connect to airband stream", details: err?.message || String(err) }));
+        }
+        return;
+      }
     }
     if (url.pathname === "/api/cyber/dns") {
       const domain = url.searchParams.get("domain") || "fraport-slovenija.si";

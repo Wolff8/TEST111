@@ -6,6 +6,7 @@ import { AsterixCadRadarScope } from "../components/AsterixCadRadarScope";
 import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
 import { CyberAuditDashboard } from "../components/CyberAuditDashboard";
+import { TacticalAirbandAudioBar } from "../components/TacticalAirbandAudioBar";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -1751,6 +1752,12 @@ export function OpsPage(props: { view: View }) {
       ) : null}
       </div>
       )}
+
+      {/* Persistent European Airband Tactical Audio Communicator */}
+      <TacticalAirbandAudioBar
+        unexpectedCount={mapPlanes.filter((p) => p.role === "small" && p.altFt < 4000).length}
+        militaryCount={mapPlanes.filter((p) => p.role === "aero" || p.role === "jet" || Boolean(p.flight && (/SVN|HOUDR/i.test(p.flight) || (p.reg && /^L[196]-/i.test(p.reg))))).length}
+      />
     </div>
   );
 }

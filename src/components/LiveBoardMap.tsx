@@ -369,7 +369,8 @@ export function LiveBoardMap(props: {
 
   // Redesigned NOTAM & Airspace Filter States
   const [notamFilterCategory, setNotamFilterCategory] = useState<"all" | "mil" | "ad" | "nav" | "obst">("all");
-  const [notamOpacity, setNotamOpacity] = useState<number>(0.025);
+  const [notamOpacity, setNotamOpacity] = useState<number>(0.005);
+  const [notamOutlineOnly, setNotamOutlineOnly] = useState<boolean>(true);
   const [notamSearch, setNotamSearch] = useState<string>("");
   const [showNotamDrawer, setShowNotamDrawer] = useState<boolean>(false);
 
@@ -739,14 +740,17 @@ export function LiveBoardMap(props: {
         </div>
       `;
 
+      const isLargeZone = item.radiusKm > 12;
+      const effectiveFill = notamOutlineOnly || isLargeZone ? 0 : notamOpacity;
+
       L.circle([item.lat, item.lon], {
         radius: item.radiusKm * 1000,
         color: col,
-        weight: 1.0,
-        opacity: notamOpacity > 0 ? 0.35 : 0.1,
-        dashArray: "4 6",
+        weight: item.isMil ? 1.0 : 0.7,
+        opacity: 0.35,
+        dashArray: "3 6",
         fillColor: col,
-        fillOpacity: notamOpacity,
+        fillOpacity: effectiveFill,
       })
         .bindPopup(popupHtml)
         .addTo(g);
@@ -765,7 +769,7 @@ export function LiveBoardMap(props: {
       g.remove();
       if (notamLayerRef.current === g) notamLayerRef.current = null;
     };
-  }, [showNotamZones, props.notams, notamFilterCategory, notamOpacity, notamSearch]);
+  }, [showNotamZones, props.notams, notamFilterCategory, notamOpacity, notamOutlineOnly, notamSearch]);
 
   // NOAA Aviation Weather (METAR/TAF) Layer
   useEffect(() => {
@@ -1157,25 +1161,53 @@ export function LiveBoardMap(props: {
             </button>
           </div>
 
-          {/* Opacity slider */}
+          {/* Opacity & Outline Controls */}
           <div>
+            <button
+              type="button"
+              onClick={() => setNotamOutlineOnly(!notamOutlineOnly)}
+              style={{
+                background: notamOutlineOnly ? "rgba(62, 224, 194, 0.2)" : "rgba(255,255,255,0.05)",
+                border: `1px solid ${notamOutlineOnly ? "#3ee0c2" : "rgba(255,255,255,0.1)"}`,
+                color: notamOutlineOnly ? "#3ee0c2" : "#94a3b8",
+                padding: "5px 10px",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontWeight: 700,
+                marginBottom: "8px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                width: "100%",
+                justifyContent: "center",
+              }}
+            >
+              <span>{notamOutlineOnly ? "✓" : "○"}</span> OUTLINE ONLY (100% CLEAR MAP VIEW)
+            </button>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
               <span style={{ color: "#94a3b8" }}>CIRCLE FILL OPACITY:</span>
-              <b style={{ color: "#ff8a3d" }}>{(notamOpacity * 100).toFixed(1)}%</b>
+              <b style={{ color: notamOutlineOnly ? "#64748b" : "#ff8a3d" }}>
+                {notamOutlineOnly ? "0.0% (DISABLED)" : `${(notamOpacity * 100).toFixed(1)}%`}
+              </b>
             </div>
             <input
               type="range"
               min="0"
-              max="0.30"
-              step="0.005"
+              max="0.08"
+              step="0.002"
               value={notamOpacity}
-              onChange={(e) => setNotamOpacity(parseFloat(e.target.value))}
-              style={{ width: "100%", accentColor: "#ff8a3d" }}
+              disabled={notamOutlineOnly}
+              onChange={(e) => {
+                setNotamOpacity(parseFloat(e.target.value));
+                if (notamOutlineOnly) setNotamOutlineOnly(false);
+              }}
+              style={{ width: "100%", accentColor: "#ff8a3d", opacity: notamOutlineOnly ? 0.4 : 1 }}
             />
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", color: "#64748b" }}>
-              <span>0% (Outline only)</span>
-              <span>2.5% (Crystal clear)</span>
-              <span>30% (High contrast)</span>
+              <span>0% (Transparent)</span>
+              <span>0.5% (Crystal clear)</span>
+              <span>8% (Light tint)</span>
             </div>
           </div>
 
