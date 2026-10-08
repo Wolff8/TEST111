@@ -75,6 +75,42 @@ export const ILLUMINATORS_OF_OPPORTUNITY = [
     polarization: "VERTICAL",
   },
   {
+    id: "trdinov-vrh-fm",
+    name: "RTV Trdinov Vrh FM Transmitter (Gorjanci / Cerklje)",
+    lat: 45.7836,
+    lon: 15.3678,
+    altM: 1178,
+    freqMhz: 90.9,
+    wavelengthM: 3.298,
+    erpKw: 100,
+    type: "FM_BROADCAST",
+    polarization: "MIXED",
+  },
+  {
+    id: "kum-fm",
+    name: "RTV Kum FM Transmitter (Sava Basin)",
+    lat: 46.0744,
+    lon: 15.0744,
+    altM: 1220,
+    freqMhz: 91.1,
+    wavelengthM: 3.291,
+    erpKw: 30,
+    type: "FM_BROADCAST",
+    polarization: "MIXED",
+  },
+  {
+    id: "sljeme-fm",
+    name: "OiV Sljeme FM Transmitter (Zagreb Border)",
+    lat: 45.9000,
+    lon: 15.9486,
+    altM: 1035,
+    freqMhz: 89.7,
+    wavelengthM: 3.342,
+    erpKw: 120,
+    type: "FM_BROADCAST",
+    polarization: "VERTICAL",
+  },
+  {
     id: "krvavec-dvbt",
     name: "Krvavec DVB-T Digital TV (MUX A)",
     lat: 46.2990,
@@ -205,7 +241,8 @@ export function calculateBistaticTelemetry(illuminator, target, receiver = MLAT_
   let rcsM2 = 2.0;
   if (target.isDrone || target.category === "DRONE_UAV") rcsM2 = 0.02;
   else if (target.isGlider || target.category === "GLIDER") rcsM2 = 0.6;
-  else if (target.category === "MILITARY") rcsM2 = 3.5;
+  else if (target.isHeli || target.role === "heli" || /B06|B412|A532|AS32|BELL/i.test(target.model || target.t || "")) rcsM2 = 4.2; // High-intensity rotor blade flash
+  else if (target.category === "MILITARY" || target.isMil) rcsM2 = 3.5;
   else if ((target.altFt || 0) > 20000) rcsM2 = 25.0; // Commercial airliner
 
   // Forward scatter enhancement when bistatic angle approaches 180 degrees
@@ -284,10 +321,13 @@ export function analyzeMlatSurfaceTargets(targets) {
     const tdoa1_2_ns = Math.round(((d1 - d2) * 1000 / 0.299792458));
     const tdoa1_3_ns = Math.round(((d1 - d3) * 1000 / 0.299792458));
 
-    // Calculate PCL reflection with RTV Pohorje and RTV Nemčavci
+    // Calculate PCL reflections with RTV Pohorje, RTV Trdinov Vrh, RTV Nemčavci, Starlink
+    const trdinovIllum = ILLUMINATORS_OF_OPPORTUNITY.find((i) => i.id === "trdinov-vrh-fm") || ILLUMINATORS_OF_OPPORTUNITY[0];
+    const cerkljeRx = MLAT_STATIONS.find((s) => s.id === "cerklje") || MLAT_STATIONS[0];
     const pclPohorje = calculateBistaticTelemetry(ILLUMINATORS_OF_OPPORTUNITY[0], t);
     const pclNemcavci = calculateBistaticTelemetry(ILLUMINATORS_OF_OPPORTUNITY[3], t);
-    const pclStarlink = calculateBistaticTelemetry(ILLUMINATORS_OF_OPPORTUNITY[5], t);
+    const pclTrdinov = calculateBistaticTelemetry(trdinovIllum, t, cerkljeRx);
+    const pclStarlink = calculateBistaticTelemetry(ILLUMINATORS_OF_OPPORTUNITY[7] || ILLUMINATORS_OF_OPPORTUNITY[4], t);
 
     enriched.push({
       ...t,
@@ -298,10 +338,10 @@ export function analyzeMlatSurfaceTargets(targets) {
         tdoaLjmsPuconciNs: tdoa1_2_ns,
         tdoaLjmsPohorjeNs: tdoa1_3_ns,
         cepAccuracyMeters: onGroundAirfield ? 4.5 : 18.0, // High surface resolution
-        stationsInSolution: ["ljms", "puconci", "pohorje", "krvavec"],
+        stationsInSolution: ["ljms", "puconci", "pohorje", "krvavec", "cerklje"],
         gdop: onGroundAirfield ? 1.4 : 2.1,
       },
-      pclReflections: [pclPohorje, pclNemcavci, pclStarlink],
+      pclReflections: [pclPohorje, pclTrdinov, pclNemcavci, pclStarlink],
     });
   }
 
