@@ -26,7 +26,13 @@ import {
   ASTERIX_SPECS,
   radarOriginStatus,
 } from "./asterix-feed.mjs";
-import { encodeLiveAsterix, encodeEchoesCat048, DEFAULT_RADAR, PSR_SITES, isLeftoverPsrSite } from "./asterix-encode.mjs";
+import { encodeLiveAsterix, encodeEchoesCat048, encodeCat021, encodeCat010, DEFAULT_RADAR, PSR_SITES, isLeftoverPsrSite } from "./asterix-encode.mjs";
+import {
+  recordNetworkPacket,
+  generateFullPcap,
+  getCapturedPackets,
+  getNetworkInterfaceSummary,
+} from "./pcap-exporter.mjs";
 import { fetchEurofplCode } from "./eurofpl-feed.mjs";
 import { applyLiveRoutes, startLiveRoutePump, listLiveRoutes, liveRouteStatus, FPL_ROUTE_API } from "./fpl-feed.mjs";
 import { fetchArrivals, isSiArrival, FIDS_LJU, OPENSKY_ARRIVAL, HUBS } from "./arrivals-feed.mjs";
@@ -88,6 +94,7 @@ import {
   scanSecretsWithRedaction,
   generateSparkCyberJob,
 } from "./cyber-tools-feed.mjs";
+import { fetchTerrestrialFr24, getTerrestrialMilTargets, calculateRotorModulation } from "./terrestrial-fr24-feed.mjs";
 import {
   ACI_BB_LAYOUT,
   ACI_SITE,
@@ -729,6 +736,56 @@ const sdrFeed = createSdrFeed(sdrTracks, () => {});
 startOgnClient();
 startDronetagClient();
 startOpenSkyPoller();
+
+function startLivePcapPump() {
+  setInterval(async () => {
+    try {
+      const radar = await loadRadar("si").catch(() => ({ items: [] }));
+      const ogn = getOgnLiveTargets();
+      const all = [...(radar.items || []), ...ogn].filter((p) => p.lat && p.lon);
+      if (!all.length) return;
+
+      const milTargets = all.filter((p) => p.isMil || p.role === "heli" || /RANGR|506e6|S5-H|SVN|TURBO/i.test(`${p.flight || ""} ${p.hex || ""} ${p.reg || ""}`));
+      const regular = all.filter((p) => !milTargets.includes(p));
+      const sample = [...milTargets.slice(0, 2), ...regular.slice(0, 3)];
+      for (const p of sample) {
+        const cat021Buf = encodeCat021(p);
+        if (cat021Buf) {
+          const isMilHeli = p.isMil || p.role === "heli" || /RANGR|506e6|S5-H/i.test(`${p.flight || ""} ${p.hex || ""}`);
+          recordNetworkPacket({
+            protocol: isMilHeli ? "ASTERIX CAT 021 (MIL/HELI)" : p.isFlarm || p.src === "ogn" ? "ASTERIX CAT 021 (FLARM)" : "ASTERIX CAT 021 (ADS-B)",
+            payload: cat021Buf,
+            srcIp: "127.0.0.1",
+            dstIp: "127.0.0.1",
+            srcPort: 50001,
+            dstPort: 8600,
+            info: `${p.flight || p.hex || "AC"} ${p.reg ? `(${p.reg})` : ""} FL${Math.round((p.altFt || 0) / 100)} GS ${Math.round(p.gs || 0)}kt (${isMilHeli ? "Terrestrial ADS-B / PCL" : p.isFlarm ? "FLARM 868MHz" : "1090ES"})`,
+            dissection: {
+              category: 21,
+              catTitle: isMilHeli ? "CAT 021 Military / Police Helicopter Surveillance v2.4" : "CAT 021 ADS-B / FLARM Target Report v2.4",
+              sac: 0,
+              sic: 21,
+              items: [
+                { tag: "I021/010", name: "Data Source Identifier", value: "SAC: 0, SIC: 21" },
+                { tag: "I021/040", name: "Target Report Descriptor", value: isMilHeli ? "Terrestrial Mil ADS-B / PCL Link (0x30)" : p.isFlarm ? "FLARM link (0x48)" : "1090ES link (0x20)" },
+                { tag: "I021/130", name: "WGS-84 Position", value: `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}` },
+                { tag: "I021/140", name: "Geometric Altitude / FL", value: `FL${Math.round((p.altFt || 0) / 100)} (${Math.round(p.altFt || 0)} ft)` },
+                { tag: "I021/080", name: "Target Address (ICAO)", value: `0x${String(p.hex || p.icao || "000000").toUpperCase()}` },
+                { tag: "I021/170", name: "Target Identification", value: String(p.flight || p.reg || p.hex || "UNKN") },
+                { tag: "I021/200", name: "Ground Speed & Track", value: `${Math.round(p.gs || 0)} kt, ${Math.round(p.track || 0)}°` },
+                ...(isMilHeli ? [{ tag: "I021/SPECIAL", name: "Tactical Unit", value: p.ownOp || "Slovenska vojska / Policija" }] : []),
+              ],
+            },
+          });
+        }
+      }
+    } catch {
+      /* ignore pump err */
+    }
+  }, 2_500);
+}
+startLivePcapPump();
+
 const rfTracks = new Map();
 const wigleFeed = createWigleFeed(rfTracks, () => cache.sensors.clear());
 const wbTracks = new Map();
@@ -1162,6 +1219,9 @@ function ingestPlane(byId, a, p) {
     heard: Boolean(a.heard || prev?.heard),
     uaId: a.uaId || prev?.uaId || "",
     model: a.model || prev?.model || "",
+    isMil: Boolean(a.isMil || prev?.isMil || /RANGR|LSV|SVN|SV\b/i.test(call) || /^S5-?H/i.test(a.r || prev?.reg || "") || /^L[1269]-/i.test(a.r || prev?.reg || "")),
+    rotorSig: a.rotorSig || prev?.rotorSig || null,
+    pclTelemetry: a.pclTelemetry || prev?.pclTelemetry || null,
     birdtam: Number.isFinite(Number(a.birdtam)) ? Number(a.birdtam) : prev?.birdtam,
     jump: Boolean(prev?.jump),
     taxi: Boolean(prev?.taxi || a.taxi),
@@ -1257,7 +1317,9 @@ function ingestPlane(byId, a, p) {
     isSiMilHeli(row)
   ) {
     row.role = "heli";
-    if (!row.ownOp) row.ownOp = "Slovenska vojska";
+    if (!row.ownOp) row.ownOp = "Slovenska vojska / Policija";
+    row.isMil = true;
+    if (!row.rotorSig) row.rotorSig = calculateRotorModulation(row.typecode || row.model || "B06", row.gs);
   }
   const agl = Number(row.aglFt) || ljmsAglFt(row.altFt);
   if (row.local && JUMP_SHIP_RE.test(row.typecode) && (agl > 3500 || (agl > 800 && (row.vs || 0) < -400))) {
@@ -2066,7 +2128,7 @@ async function buildRadar(place) {
     return t && !(t.lat && t.lon);
   });
   const byId = new Map();
-  const [adsbRows, radioRows, skyRows, tatRows, ognRows, hexRows, nmBoard, uavBoard, birdBoard, sondeBoard, echoBoard, tar1090Board, ultraBoard, ljmsRows, rakicanRows, ljceRows, novoRows, milRows, itRows] = await Promise.all([
+  const [adsbRows, radioRows, skyRows, tatRows, ognRows, hexRows, nmBoard, uavBoard, birdBoard, sondeBoard, echoBoard, tar1090Board, ultraBoard, ljmsRows, rakicanRows, ljceRows, novoRows, milRows, itRows, fr24Rows] = await Promise.all([
     fetchAdsbAround(p.lat, p.lon, diskNm).catch(() => []),
     needRadioDisk ? fetchAdsbAround(lobe.fix.lat, lobe.fix.lon, extraNm).catch(() => []) : Promise.resolve([]),
     Promise.resolve(openSkyCache.rows || []),
@@ -2086,8 +2148,10 @@ async function buildRadar(place) {
     wide ? Promise.resolve([]) : fetchAdsbAround(NOVO_MESTO.lat, NOVO_MESTO.lon, 40, { lists: false }).catch(() => []),
     fetchSiMilWatch().catch(() => []),
     wide ? fetchAdsbAround(IT_HUB.lat, IT_HUB.lon, IT_HUB.nm, { lists: false }).catch(() => []) : Promise.resolve([]),
+    fetchTerrestrialFr24(p.lat, p.lon, Math.max(diskNm, 160)).catch(() => []),
   ]);
   tar1090Status = tar1090Board;
+  for (const a of fr24Rows || []) ingestPlane(byId, a, p);
   for (const a of adsbRows) ingestPlane(byId, a, p);
   for (const a of radioRows) ingestPlane(byId, a, p);
   for (const a of ljmsRows) ingestPlane(byId, a, p);
@@ -4091,6 +4155,28 @@ const httpServer = createServer(async (req, res) => {
       const bqTable = url.searchParams.get("output") || "ops_project.aviation_security.anomalies";
       const script = generateSparkCyberJob({ inputPath, bqTable });
       sendJson(req, res, { ok: true, script, runtime: "Dataproc Serverless / PySpark 3.4" });
+      return;
+    }
+    if (url.pathname === "/api/network/telemetry" || url.pathname === "/api/wireshark/telemetry") {
+      const summary = getNetworkInterfaceSummary();
+      sendJson(req, res, { ok: true, ...summary });
+      return;
+    }
+    if (url.pathname === "/api/network/packets" || url.pathname === "/api/wireshark/packets") {
+      const limit = parseInt(url.searchParams.get("limit") || "100", 10);
+      const pkts = getCapturedPackets(limit);
+      sendJson(req, res, { ok: true, count: pkts.length, packets: pkts });
+      return;
+    }
+    if (url.pathname === "/api/network/asterix.pcap" || url.pathname === "/api/wireshark/traffic.pcap" || url.pathname === "/api/wireshark/asterix.pcap") {
+      const pcapBuf = generateFullPcap();
+      res.writeHead(200, {
+        ...cors,
+        "Content-Type": "application/vnd.tcpdump.pcap",
+        "Content-Disposition": 'attachment; filename="eurocontrol_asterix_live.pcap"',
+        "Content-Length": pcapBuf.length,
+      });
+      res.end(pcapBuf);
       return;
     }
     if (url.pathname === "/api/ogn/raw" || url.pathname === "/api/ogn/packets" || url.pathname === "/api/ogn/ljms") {
