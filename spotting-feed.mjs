@@ -126,54 +126,54 @@ export const SPOTTING_AIRPORTS = {
 
 // Slovenian Air Force & Police Fleet Roster
 export const SLOVENIAN_STATE_FLEET = [
-  // Pilatus PC-9M Hudournik (Advanced Turboprop Trainer / Close Support)
-  { reg: "L9-51", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e71" },
-  { reg: "L9-52", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e72" },
-  { reg: "L9-53", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e73" },
-  { reg: "L9-54", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e74" },
-  { reg: "L9-55", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e75" },
-  { reg: "L9-56", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e76" },
-  { reg: "L9-57", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e77" },
-  { reg: "L9-58", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e78" },
-  { reg: "L9-59", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e79" },
-  { reg: "L9-61", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Tactical Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e7b" },
+  // Pilatus PC-9M Hudournik (Advanced Turboprop Trainer / Close Support, 152. LEESK LJCE)
+  { reg: "L9-61", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f5d" },
+  { reg: "L9-62", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f5e" },
+  { reg: "L9-63", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f5f" },
+  { reg: "L9-64", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f60" },
+  { reg: "L9-65", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f61" },
+  { reg: "L9-66", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f62" },
+  { reg: "L9-67", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f63" },
+  { reg: "L9-68", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f64" },
+  { reg: "L9-69", type: "PC9", model: "Pilatus PC-9M Hudournik", role: "Trainer / Close Air Support", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f65" },
 
-  // Pilatus PC-6/B2-H4 Turbo-Porter (STOL Mountain Transport & Parachute)
-  { reg: "L6-01", type: "PC6", model: "Pilatus PC-6 Turbo-Porter", role: "STOL Utility / Parachute", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e81" },
-  { reg: "L6-02", type: "PC6", model: "Pilatus PC-6 Turbo-Porter", role: "STOL Utility / Parachute", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e82" },
+  // Pilatus PC-6/B2-H4 Turbo-Porter (STOL Mountain Transport & Parachute, 152. LEESK)
+  { reg: "L6-02", type: "PC6T", model: "Pilatus PC-6/B2-H4 Porter", role: "STOL Utility / Parachute", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f6c" },
+  { reg: "L6-03", type: "PC6T", model: "Pilatus PC-6/B2-H4 Porter", role: "STOL Utility / Parachute", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f6d" },
 
-  // Alenia C-27J Spartan (Tactical Airlifter)
-  { reg: "L1-02", type: "C27J", model: "Leonardo C-27J Spartan", role: "Tactical Airlifter", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506ea2" },
-  { reg: "L1-03", type: "C27J", model: "Leonardo C-27J Spartan", role: "Tactical Airlifter", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506ea3" },
+  // Leonardo C-27J Spartan (Tactical Airlifter, 152. LEESK LJCE)
+  { reg: "L2-01", type: "C27J", model: "Leonardo C-27J Spartan", role: "Tactical Airlifter", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f6a" },
+  { reg: "L2-02", type: "C27J", model: "Leonardo C-27J Spartan", role: "Tactical Airlifter", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f6b" },
 
-  // Dassault Falcon 2000EX (Government VIP Transport)
-  { reg: "L1-01", type: "F2EX", model: "Dassault Falcon 2000EX", role: "State VIP Transport", unit: "152. letalska eskadrilja", base: "LJLJ", hex: "506e6b" },
+  // Dassault Falcon 2000EX (Government VIP Transport, 152. LEESK / SVN01)
+  { reg: "L1-01", type: "F2EX", model: "Dassault Falcon 2000EX", role: "State VIP Transport", unit: "152. letalska eskadrilja", base: "LJLJ", hex: "506f24" },
 
-  // Let L-410 Turbolet
-  { reg: "L4-01", type: "L410", model: "Let L-410UVP-E Turbolet", role: "Light Transport", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506e91" },
+  // Let L-410UVP-E Turbolet (152. LEESK LJCE)
+  { reg: "L4-01", type: "L410", model: "Let L-410UVP-E Turbolet", role: "Light Transport", unit: "152. letalska eskadrilja", base: "LJCE", hex: "506f26" },
 
-  // Eurocopter / Airbus AS532AL Cougar / H215M (Heavy Transport / Combat SAR)
-  { reg: "H2-11", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e6d" },
-  { reg: "H2-12", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e6e" },
-  { reg: "H2-13", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e6f" },
-  { reg: "H2-14", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e70" },
+  // Airbus AS532AL Cougar (Medium Transport / Combat SAR, 151. HEESK LJCE)
+  { reg: "H3-71", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f67" },
+  { reg: "H3-72", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f68" },
+  { reg: "H3-73", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f69" },
+  { reg: "H3-74", type: "AS32", model: "Eurocopter AS532AL Cougar", role: "Medium Transport / CSAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f70" },
 
-  // Bell 412 (Utility / Mountain SAR / HEMS)
-  { reg: "H2-31", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e51" },
-  { reg: "H2-32", type: "B412", model: "Bell 412HP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e52" },
-  { reg: "H2-33", type: "B412", model: "Bell 412HP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e53" },
-  { reg: "H2-34", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e54" },
-  { reg: "H2-35", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e55" },
-  { reg: "H2-36", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e56" },
-  { reg: "H2-37", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e57" },
-  { reg: "H2-38", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506e58" },
+  // Bell 412EP / HP / SP (Tactical Helicopter / Mountain SAR / HEMS, 151. HEESK LJCE)
+  { reg: "H2-31", type: "B412", model: "Bell 412SP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f3f" },
+  { reg: "H2-32", type: "B412", model: "Bell 412HP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f40" },
+  { reg: "H2-33", type: "B412", model: "Bell 412HP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f41" },
+  { reg: "H2-34", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f42" },
+  { reg: "H2-35", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f43" },
+  { reg: "H2-36", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f44" },
+  { reg: "H2-37", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f45" },
+  { reg: "H2-38", type: "B412", model: "Bell 412EP", role: "Utility / Mountain SAR", unit: "151. helikopterska eskadrilja", base: "LJCE", hex: "506f46" },
 
-  // Slovenian Police Air Support Unit (Letalska policijska enota - LPE, Brnik LJLJ)
-  { reg: "S5-HPQ", type: "A169", model: "Leonardo AW169", role: "Police / Mountain Rescue / HEMS", unit: "LPE Brnik", base: "LJLJ", hex: "506d81" },
-  { reg: "S5-HPR", type: "A169", model: "Leonardo AW169", role: "Police / Mountain Rescue / HEMS", unit: "LPE Brnik", base: "LJLJ", hex: "506d82" },
-  { reg: "S5-HPG", type: "A109", model: "Agusta-Westland AW109E Power", role: "Police Patrol / Surveillance", unit: "LPE Brnik", base: "LJLJ", hex: "506d83" },
-  { reg: "S5-HPD", type: "B206", model: "Bell 206B JetRanger III", role: "Police Training / Recon", unit: "LPE Brnik", base: "LJLJ", hex: "506d84" },
-  { reg: "S5-HPE", type: "EC35", model: "Eurocopter EC135P2+", role: "Police / Border Surveillance", unit: "LPE Brnik", base: "LJLJ", hex: "506d85" },
+  // Slovenian Police / Territorial Defence (Letalska policijska enota - LPE, Brnik & LJCE)
+  { reg: "S5-HZJ", type: "B06", model: "Bell 206B JetRanger III", role: "Police Patrol / Tactical Recon", unit: "LPE (RANGR93)", base: "LJCE / LJLJ", hex: "506e6c" },
+  { reg: "S5-HPK", type: "B06", model: "Bell 206B JetRanger III", role: "Police Patrol / Recon", unit: "LPE", base: "LJLJ", hex: "506e6d" },
+  { reg: "S5-HKM", type: "B412", model: "Bell 412", role: "Police Rescue / Tactical Transport", unit: "LPE", base: "LJLJ", hex: "506e6e" },
+  { reg: "S5-HPE", type: "A109", model: "Agusta-Westland AW109E Power", role: "Police / Border Surveillance", unit: "LPE", base: "LJLJ", hex: "506e6f" },
+  { reg: "S5-HPG", type: "A169", model: "Leonardo AW169", role: "Police / Mountain Rescue / HEMS", unit: "LPE", base: "LJLJ", hex: "506e70" },
+  { reg: "S5-HPA", type: "A169", model: "Leonardo AW169", role: "Police / Mountain Rescue / HEMS", unit: "LPE", base: "LJLJ", hex: "506e71" },
 ];
 
 export const MIL_HEX_MAP = new Map(SLOVENIAN_STATE_FLEET.map((f) => [f.hex.toLowerCase(), f]));
