@@ -48,7 +48,12 @@ import { parseIfpsText, enrichIfpsRecs, inIfpsZone, tagIfpsOnPlane, probeIfpsMan
 import { asterixUdpListenPort, ASTERIX_UDP_DEFAULT } from "./asterix-udp.mjs";
 import { altColor } from "./alt-color.mjs";
 import { ingestTrailPoint, selectTrailPast, TRAIL_KEEP_MS as TRAIL_KEEP_WINDOW, TRAIL_SEND_MAX as TRAIL_SEND_CAP, TRAIL_SEND_DENSE } from "./trail-sample.mjs";
-import { probeSwim, probeAisDef, probeOpenAtmJson, probeAmanJson, probeChromeScripts, probeEatmStakeholder, probeAirm, AIS_DEF, OPENATM_JSON, OPENATM_META, AMAN_JSON, AMAN_META, RTCA_AJAX, RTCA_SITE, AEROPUS_KENDO, AEROPUS_SITE, EASA_MAIN, EASA_SITE, CF_BEACON, EC_FOOTER_JS, EC_SITE, EC_FOOTER_LIBS, SKYBRARY_DIALOG, SKYBRARY_SITE, SKYBRARY_GTAG_AJAX, CHROME_SCRIPTS, EATM_STAKEHOLDER_URL, EATM_PORTAL, EATM_STAKEHOLDERS, EATM_META, SWIM_CATALOG, SWIM_PUBLIC_LIVE, SWIM_REF, SWIM_REGISTRY, SWIM_SCHEMA, OGC_WFS_TE, OGC_WFS_TE_DOC, OGC_WFS_TE_TITLE, OGC_WFS_TE_DATE, OGC_WFS_TE_CAT, OGC_SITE, AIRM_URL, AIRM_SITE, AIRM_TITLE, AIRM_MODELS, AIRM_BOOTSTRAP, ACI_BB_LAYOUT, ACI_SITE, CROCONTROL_JQ, CROCONTROL_SITE, AMC_SITE, AMC_ANON, AMC_ANON_TITLE, AMC_MAPS, AMC_LOGON, AMC_COMM, AMC_WORKAREAS, AMC_DNN, PRISM_CDN, PRISM_SITE } from "./swim-feed.mjs";
+import {
+  fetchSloveniaNotams,
+  fetchAviationWeather,
+  fetchRainViewerRadar,
+  fetchTatGlobeCentralEurope,
+} from "./aviation-live-feed.mjs";
 
 try {
   const envTxt = readFileSync(new URL("./.env", import.meta.url), "utf8");
@@ -1830,10 +1835,11 @@ async function buildRadar(place) {
     return t && !(t.lat && t.lon);
   });
   const byId = new Map();
-  const [adsbRows, radioRows, skyRows, ognRows, hexRows, nmBoard, uavBoard, birdBoard, sondeBoard, echoBoard, tar1090Board, ultraBoard, ljmsRows, rakicanRows, ljceRows, novoRows, milRows, itRows] = await Promise.all([
+  const [adsbRows, radioRows, skyRows, tatRows, ognRows, hexRows, nmBoard, uavBoard, birdBoard, sondeBoard, echoBoard, tar1090Board, ultraBoard, ljmsRows, rakicanRows, ljceRows, novoRows, milRows, itRows] = await Promise.all([
     fetchAdsbAround(p.lat, p.lon, diskNm).catch(() => []),
     needRadioDisk ? fetchAdsbAround(lobe.fix.lat, lobe.fix.lon, extraNm).catch(() => []) : Promise.resolve([]),
     Promise.resolve(openSkyCache.rows || []),
+    fetchTatGlobeCentralEurope().catch(() => []),
     fetchOgnSi().catch(() => []),
     missing.length ? fetchAdsbHexes(missing).catch(() => []) : Promise.resolve([]),
     loadNmBoard().catch(() => ({ flights: [], regulations: [], fmp: NM_FMP })),
@@ -1864,6 +1870,7 @@ async function buildRadar(place) {
     if (a.type === "asterix" && icao && byId.has(icao)) continue;
     ingestPlane(byId, a, p);
   }
+  for (const a of tatRows) ingestPlane(byId, a, p);
   for (const a of hexRows) ingestPlane(byId, a, p);
   for (const a of tar1090Board.aircraft || []) ingestPlane(byId, a, p);
   for (const a of ultraBoard.aircraft || []) ingestPlane(byId, a, p);
@@ -3389,20 +3396,45 @@ const httpServer = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/aviation/notams" || url.pathname === "/api/notams") {
+      const notams = await fetchSloveniaNotams();
+      res.writeHead(200, cors);
+      res.end(JSON.stringify(notams));
+      return;
+    }
+
+    if (url.pathname === "/api/aviation/weather" || url.pathname === "/api/aviation-weather") {
+      const wx = await fetchAviationWeather();
+      res.writeHead(200, cors);
+      res.end(JSON.stringify(wx));
+      return;
+    }
+
+    if (url.pathname === "/api/aviation/radar-weather" || url.pathname === "/api/radar-weather") {
+      const r = await fetchRainViewerRadar();
+      res.writeHead(200, cors);
+      res.end(JSON.stringify(r));
+      return;
+    }
+
     if (url.pathname === "/api/open-apis/scanner") {
       res.writeHead(200, cors);
       res.end(
         JSON.stringify({
           ok: true,
           apis: [
+            { id: "sloveniacontrol", name: "Slovenia Control KZPS Live NOTAMs", type: "Airspace Restrictions & Military", status: "active", endpoint: "https://www.sloveniacontrol.si/NOTAM/summaryA.xml" },
+            { id: "noaa-awc", name: "NOAA Aviation Weather Center METAR/TAF", type: "Aviation Weather", status: "active", endpoint: "https://aviationweather.gov/api/data/metar" },
+            { id: "tat-globe", name: "TheAirTraffic Globe Unfiltered ADS-B", type: "Real Commercial/GA/Military", status: "active", endpoint: "https://globe.theairtraffic.com/data/aircraft.json" },
             { id: "opensky", name: "OpenSky Network Public API", type: "ADS-B", status: "active", endpoint: "https://opensky-network.org/api/states/all" },
+            { id: "airplaneslive", name: "Airplanes.live Unfiltered ADS-B & Mil", type: "ADS-B & Military", status: "active", endpoint: "https://api.airplanes.live/v2/mil" },
             { id: "adsbfi", name: "adsb.fi Public Feeds", type: "ADS-B & Military", status: "active", endpoint: "https://opendata.adsb.fi/api/v3" },
             { id: "adsblol", name: "adsb.lol Open Data", type: "ADS-B & UAV", status: "active", endpoint: "https://api.adsb.lol" },
-            { id: "sondehub", name: "SondeHub Radiosonde API", type: "Weather Balloons", status: "active", endpoint: "https://api.v2.sondehub.org" },
+            { id: "sondehub", name: "SondeHub Radiosonde Telemetry v2", type: "Weather Balloons (RS41/iMS-100)", status: "active", endpoint: "https://api.v2.sondehub.org/sondes/telemetry" },
             { id: "ogn", name: "Open Glider Network (OGN)", type: "Gliders & Drones", status: "active", endpoint: "http://aprs.glidernet.org:14501" },
             { id: "ttn", name: "The Things Network Packet Broker", type: "LoRaWAN Gateways", status: "active", endpoint: "https://mapper.packetbroker.net/api/v2" },
-            { id: "rainviewer", name: "RainViewer Meteorological Radar", type: "Weather Radar", status: "active", endpoint: "https://api.rainviewer.com/public/weather-maps.json" },
-            { id: "liveatc", name: "LiveATC.net Regional ATC Audio", type: "Air Traffic Radio", status: "active", endpoint: "https://www.liveatc.net" },
+            { id: "rainviewer", name: "RainViewer Meteorological Radar Composite", type: "Precipitation Radar", status: "active", endpoint: "https://api.rainviewer.com/public/weather-maps.json" },
+            { id: "liveatc", name: "LiveATC.net Regional ATC Audio Streams", type: "Air Traffic Radio", status: "active", endpoint: "https://www.liveatc.net" },
           ],
         }),
       );
@@ -4388,6 +4420,29 @@ function startAsterixUdp() {
   });
 }
 
+function startSdrUdp() {
+  const port = Number(process.env.SDR_UDP_PORT || 8600);
+  const bind = process.env.SDR_UDP_BIND || "0.0.0.0";
+  const sock = dgram.createSocket("udp4");
+  sock.on("message", (msg) => {
+    try {
+      if (msg.includes(0x1a)) sdrFeed.ingestBeast(msg);
+      else {
+        const text = msg.toString("utf8").trim();
+        if (text.startsWith("{") || text.startsWith("[")) ingestDump1090(JSON.parse(text));
+        else sdrFeed.ingestText(text);
+      }
+      expireMap(sdrTracks);
+    } catch {}
+  });
+  sock.on("error", (e) => {
+    console.log(`SDR UDP ${bind}:${port} ${String(e.message || e)}`);
+  });
+  sock.bind(port, bind, () => {
+    console.log(`SDR Beast/Mode S UDP ${bind}:${port}`);
+  });
+}
+
 function startAsterixFeed() {
   const feed = process.env.ASTERIX_FEED_URL || "";
   if (!feed) return;
@@ -4530,6 +4585,7 @@ startRidFeed();
 startSdrFeed();
 startAsterixFeed();
 startAsterixUdp();
+startSdrUdp();
 startOpenSkyPump();
 startWidebandFeed();
 startWigleFeed();

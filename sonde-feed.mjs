@@ -1,7 +1,7 @@
 /** Live radiosondes + amateur HAB from SondeHub v2. Public JSON, not simulated. */
 
-export const SONDEHUB_SONDES = "https://api.v2.sondehub.org/sondes";
-export const SONDEHUB_AMATEUR = "https://api.v2.sondehub.org/amateur";
+export const SONDEHUB_SONDES = "https://api.v2.sondehub.org/sondes/telemetry";
+export const SONDEHUB_AMATEUR = "https://api.v2.sondehub.org/amateur/telemetry";
 export const SONDEHUB_SITE = "https://sondehub.org/";
 
 const UA = { "user-agent": "OpsLiveDash/1.0", accept: "application/json" };
@@ -87,8 +87,8 @@ function bagToRows(bag, amateur) {
 export async function fetchSondePublic({ lat = SI.lat, lon = SI.lon, meters = 850_000 } = {}) {
   const q = `lat=${lat}&lon=${lon}&distance=${meters}`;
   const [sondes, amateur] = await Promise.all([
-    jget(`${SONDEHUB_SONDES}?${q}&last=10800`, 12_000).catch(() => ({})),
-    jget(`${SONDEHUB_AMATEUR}?${q}&last=7200`, 12_000).catch(() => ({})),
+    jget(`${SONDEHUB_SONDES}?${q}`, 12_000).catch(() => ({})),
+    jget(`${SONDEHUB_AMATEUR}?duration=60m`, 12_000).catch(() => ({})),
   ]);
   const wx = bagToRows(sondes, false);
   const hab = bagToRows(amateur, true);
