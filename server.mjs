@@ -4749,7 +4749,7 @@ function startAsterixUdp() {
 }
 
 function startSdrUdp() {
-  const port = Number(process.env.SDR_UDP_PORT || 8600);
+  const port = Number(process.env.SDR_UDP_PORT || 8601);
   const bind = process.env.SDR_UDP_BIND || "0.0.0.0";
   const sock = dgram.createSocket("udp4");
   sock.on("message", (msg) => {
