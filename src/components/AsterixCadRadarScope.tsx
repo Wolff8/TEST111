@@ -1,4 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { SI_OUTLINE } from "../lib";
 
 export type CadRadarCenter = {
   id: string;
@@ -17,6 +20,14 @@ const RADAR_CENTERS: CadRadarCenter[] = [
   { id: "ljce", name: "Cerklje Military Base (LJCE)", lat: 45.8999, lon: 15.5303, altM: 153, icao: "LJCE" },
 ];
 
+export const PCL_TRANSMITTERS = [
+  { id: "trdinov-vrh", name: "RTV Trdinov Vrh (Gorjanci)", freq: "90.9 MHz FM", lat: 45.7836, lon: 15.3678 },
+  { id: "kum", name: "RTV Kum (Zasavje)", freq: "91.1 MHz FM", lat: 46.1089, lon: 15.0747 },
+  { id: "sljeme", name: "HRT Sljeme (Zagreb)", freq: "89.7 MHz FM", lat: 45.9000, lon: 15.9481 },
+  { id: "krvavec", name: "RTV Krvavec (Gorenjska)", freq: "91.8 MHz FM", lat: 46.2975, lon: 14.5342 },
+  { id: "maribor-pohorje", name: "RTV Pohorje (Štajerska)", freq: "88.5 MHz FM", lat: 46.5161, lon: 15.5878 },
+];
+
 export const AsterixCadRadarScope: React.FC<{
   planes?: any[];
   onPinpointPlane?: (id: string) => void;
@@ -27,18 +38,27 @@ export const AsterixCadRadarScope: React.FC<{
   const [onlyLjmsGateway, setOnlyLjmsGateway] = useState<boolean>(false);
   const [showSurfaceMlat, setShowSurfaceMlat] = useState<boolean>(true);
   const [showPclBistatic, setShowPclBistatic] = useState<boolean>(true);
-  const [showSatellites, setShowSatellites] = useState<boolean>(true);
   const [showPhosphorTrails, setShowPhosphorTrails] = useState<boolean>(true);
-  const [selectedTarget, setSelectedTarget] = useState<any | null>(null);
+  const [mapMode, setMapMode] = useState<"dark" | "satellite" | "crt">("dark");
+  const [scopeShape, setScopeShape] = useState<"circle" | "rect">("circle");
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [trackSelected, setTrackSelected] = useState<boolean>(false);
+  const [mobileTab, setMobileTab] = useState<"scope" | "target" | "aprs">("scope");
 
-  // Raw OGN packets state
+  const [selectedTarget, setSelectedTarget] = useState<any | null>(null);
   const [rawPackets, setRawPackets] = useState<any[]>([]);
   const [pclData, setPclData] = useState<any | null>(null);
   const [terminalFilter, setTerminalFilter] = useState<"all" | "ljms">("all");
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const labelLayerRef = useRef<L.TileLayer | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const sweepAngleRef = useRef<number>(0);
+  const targetHistoryRef = useRef<Map<string, { lat: number; lon: number; time: number }[]>>(new Map());
 
   const activeCenter = useMemo(
     () => RADAR_CENTERS.find((c) => c.id === centerId) || RADAR_CENTERS[0],
@@ -51,8 +71,12 @@ export const AsterixCadRadarScope: React.FC<{
     const fetchTelemetry = async () => {
       try {
         const [ognRes, pclRes] = await Promise.all([
-          fetch(`/api/ogn/raw?ljms=${terminalFilter === "ljms" ? "1" : "0"}`).then((r) => r.json()).catch(() => ({ packets: [] })),
-          fetch("/api/pcl/telemetry").then((r) => r.json()).catch(() => null),
+          fetch(`/api/ogn/raw?ljms=${terminalFilter === "ljms" ? "1" : "0"}`)
+            .then((r) => r.json())
+            .catch(() => ({ packets: [] })),
+          fetch("/api/pcl/telemetry")
+            .then((r) => r.json())
+            .catch(() => null),
         ]);
         if (active) {
           if (ognRes && ognRes.packets) setRawPackets(ognRes.packets);
@@ -69,29 +93,161 @@ export const AsterixCadRadarScope: React.FC<{
     };
   }, [terminalFilter]);
 
-  // Transform coordinates to radar screen pixels
-  const wgsToScreen = (lat: number, lon: number, width: number, height: number) => {
-    const origin = activeCenter;
-    const dLat = (lat - origin.lat) * 60; // nautical miles approx
-    const dLon = (lon - origin.lon) * 60 * Math.cos((origin.lat * Math.PI) / 180);
+  // Map Range Scale to Leaflet Zoom Level
+  const rangeToZoom = useCallback((nm: number) => {
+    if (nm <= 15) return 11;
+    if (nm <= 25) return 10;
+    if (nm <= 40) return 9;
+    if (nm <= 60) return 8;
+    if (nm <= 100) return 7;
+    return 6;
+  }, []);
 
-    const cx = width / 2;
-    const cy = height / 2;
-    const scale = (Math.min(width, height) / 2) / rangeNm;
+  // Initialize Real Leaflet Map Underlay
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
 
-    const screenX = cx + dLon * scale;
-    const screenY = cy - dLat * scale;
+    const map = L.map(mapContainerRef.current, {
+      center: [activeCenter.lat, activeCenter.lon],
+      zoom: rangeToZoom(rangeNm),
+      zoomControl: false,
+      attributionControl: false,
+      keyboard: false,
+    });
 
-    const rhoNm = Math.sqrt(dLat ** 2 + dLon ** 2);
-    const thetaDeg = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
+    mapRef.current = map;
 
-    return { x: screenX, y: screenY, rhoNm, thetaDeg, inView: rhoNm <= rangeNm * 1.05 };
-  };
+    // Handle map click to select closest target
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      const clickPt = map.latLngToContainerPoint(e.latlng);
+      let closest: any = null;
+      let minDist = 32; // 32px tolerance for touch / click
 
-  // Main Radar Canvas Rendering Loop
+      const allTargets = [
+        ...(pclData?.targets || []),
+        ...planes.filter((p) => !pclData?.targets?.some((t: any) => t.hex === (p.icao || p.id || p.hex))),
+      ];
+
+      for (const t of allTargets) {
+        if (!t.lat || !t.lon) continue;
+        const pt = map.latLngToContainerPoint([t.lat, t.lon]);
+        const dist = Math.sqrt((pt.x - clickPt.x) ** 2 + (pt.y - clickPt.y) ** 2);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = t;
+        }
+      }
+
+      if (closest) {
+        setSelectedTarget(closest);
+        if (onPinpointPlane) onPinpointPlane(closest.hex || closest.id);
+      } else {
+        setSelectedTarget(null);
+      }
+    });
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  // Update Map Tiles when mapMode changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    tileLayerRef.current?.remove();
+    labelLayerRef.current?.remove();
+    tileLayerRef.current = null;
+    labelLayerRef.current = null;
+
+    if (mapMode === "dark") {
+      tileLayerRef.current = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 16 }
+      ).addTo(map);
+
+      labelLayerRef.current = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 16, opacity: 0.65 }
+      ).addTo(map);
+    } else if (mapMode === "satellite") {
+      tileLayerRef.current = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 18 }
+      ).addTo(map);
+
+      labelLayerRef.current = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 18, opacity: 0.75 }
+      ).addTo(map);
+    }
+    // "crt" mode leaves map without raster tiles, rendering pure dark matrix
+  }, [mapMode]);
+
+  // Center & Zoom Updates
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.setView([activeCenter.lat, activeCenter.lon], rangeToZoom(rangeNm), { animate: true });
+  }, [activeCenter, rangeNm, rangeToZoom]);
+
+  // Target Following
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !trackSelected || !selectedTarget?.lat || !selectedTarget?.lon) return;
+    map.panTo([selectedTarget.lat, selectedTarget.lon], { animate: true });
+  }, [trackSelected, selectedTarget?.lat, selectedTarget?.lon]);
+
+  // Fullscreen Handler
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      if (containerRef.current.requestFullscreen) {
+        containerRef.current.requestFullscreen().catch(() => {});
+      } else if ((containerRef.current as any).webkitRequestFullscreen) {
+        (containerRef.current as any).webkitRequestFullscreen();
+      }
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+      setTimeout(() => mapRef.current?.invalidateSize(), 150);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+    };
+  }, []);
+
+  // Update Canvas Size to Match Viewport Frame
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const map = mapRef.current;
+    if (!canvas || !map) return;
+    const rect = map.getContainer().getBoundingClientRect();
+    if (canvas.width !== rect.width || canvas.height !== rect.height) {
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+  }, []);
+
+  // Main Radar Canvas Animation Loop
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const map = mapRef.current;
+    if (!canvas || !map) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -100,100 +256,149 @@ export const AsterixCadRadarScope: React.FC<{
     const render = () => {
       if (!isRunning) return;
 
+      resizeCanvas();
       const width = canvas.width;
       const height = canvas.height;
-      const cx = width / 2;
-      const cy = height / 2;
-      const maxRadius = Math.min(width, height) / 2;
-      const scale = maxRadius / rangeNm;
-
-      // 1. Phosphor Persistence Fade
-      if (showPhosphorTrails) {
-        ctx.fillStyle = "rgba(4, 12, 10, 0.14)";
-        ctx.fillRect(0, 0, width, height);
-      } else {
-        ctx.fillStyle = "#040c0a";
-        ctx.fillRect(0, 0, width, height);
+      if (width === 0 || height === 0) {
+        animFrameRef.current = requestAnimationFrame(render);
+        return;
       }
 
-      // 2. CAD Vector Radar Grid (Phosphor Green)
+      const centerPt = map.latLngToContainerPoint([activeCenter.lat, activeCenter.lon]);
+      const northPt = map.latLngToContainerPoint([activeCenter.lat + rangeNm / 60, activeCenter.lon]);
+      const maxRadiusPx = Math.abs(centerPt.y - northPt.y);
+
+      // Clear Canvas
+      ctx.clearRect(0, 0, width, height);
+
+      // 1. Classic Circular Scope Bezel Mask
+      if (scopeShape === "circle") {
+        ctx.save();
+        ctx.fillStyle = "rgba(2, 8, 6, 0.94)";
+        ctx.beginPath();
+        ctx.rect(0, 0, width, height);
+        ctx.arc(centerPt.x, centerPt.y, maxRadiusPx, 0, Math.PI * 2, true);
+        ctx.fill();
+
+        // Glowing scope perimeter ring
+        ctx.strokeStyle = "#00ff66";
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = "#00ff66";
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.arc(centerPt.x, centerPt.y, maxRadiusPx, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 2. Phosphor Grid Range Rings
       ctx.save();
-      ctx.strokeStyle = "rgba(0, 255, 102, 0.22)";
+      ctx.strokeStyle = "rgba(0, 255, 102, 0.28)";
       ctx.lineWidth = 1;
 
-      // Concentric Slant Range Rings
-      const ringIntervals = rangeNm <= 15 ? [2, 5, 10, 15] : rangeNm <= 50 ? [10, 20, 30, 40, 50] : [20, 40, 60, 80, 100];
+      const ringIntervals = rangeNm <= 15 ? [3, 6, 9, 12, 15] : rangeNm <= 30 ? [5, 10, 15, 20, 25, 30] : rangeNm <= 60 ? [10, 20, 30, 40, 50, 60] : [20, 40, 60, 80, 100];
       for (const r of ringIntervals) {
         if (r > rangeNm) continue;
-        const radiusPx = r * scale;
+        const pt = map.latLngToContainerPoint([activeCenter.lat + r / 60, activeCenter.lon]);
+        const rPx = Math.abs(centerPt.y - pt.y);
+
         ctx.beginPath();
-        ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+        ctx.arc(centerPt.x, centerPt.y, rPx, 0, Math.PI * 2);
         ctx.stroke();
 
         // Range Label
-        ctx.fillStyle = "rgba(0, 255, 102, 0.55)";
-        ctx.font = "10px 'Share Tech Mono', monospace";
-        ctx.fillText(`${r} NM`, cx + 6, cy - radiusPx + 12);
+        ctx.fillStyle = "rgba(0, 255, 102, 0.75)";
+        ctx.font = "bold 10px 'Share Tech Mono', monospace";
+        ctx.fillText(`${r} NM`, centerPt.x + 6, centerPt.y - rPx + 12);
       }
 
-      // Azimuth Spokes (every 30 degrees)
+      // 3. Azimuth Radials (every 30 degrees)
       for (let deg = 0; deg < 360; deg += 30) {
         const rad = ((deg - 90) * Math.PI) / 180;
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + Math.cos(rad) * maxRadius, cy + Math.sin(rad) * maxRadius);
+        ctx.moveTo(centerPt.x, centerPt.y);
+        ctx.lineTo(centerPt.x + Math.cos(rad) * maxRadiusPx, centerPt.y + Math.sin(rad) * maxRadiusPx);
         ctx.stroke();
 
         // Heading Label
-        const lx = cx + Math.cos(rad) * (maxRadius - 16);
-        const ly = cy + Math.sin(rad) * (maxRadius - 16);
-        ctx.fillStyle = "rgba(0, 255, 102, 0.65)";
-        ctx.font = "10px 'Share Tech Mono', monospace";
+        const lx = centerPt.x + Math.cos(rad) * (maxRadiusPx - 16);
+        const ly = centerPt.y + Math.sin(rad) * (maxRadiusPx - 16);
+        ctx.fillStyle = "rgba(0, 255, 102, 0.85)";
+        ctx.font = "bold 10px 'Share Tech Mono', monospace";
         ctx.fillText(`${deg.toString().padStart(3, "0")}°`, lx - 10, ly + 4);
       }
       ctx.restore();
 
-      // 3. Airfield CAD Vectors (LJMS, LJMB, LJLJ)
-      if (pclData && pclData.aerodromes) {
-        for (const apt of pclData.aerodromes) {
-          const aptPos = wgsToScreen(apt.arpLat, apt.arpLon, width, height);
-          if (aptPos.inView) {
-            ctx.save();
-            ctx.strokeStyle = "#3ee0c2";
-            ctx.fillStyle = "#3ee0c2";
-            ctx.lineWidth = 2;
-
-            // Airfield Center Icon
-            ctx.strokeRect(aptPos.x - 4, aptPos.y - 4, 8, 8);
-            ctx.font = "bold 11px 'Share Tech Mono', monospace";
-            ctx.fillText(`✈ ${apt.icao} · ${apt.name.split(" ")[0]}`, aptPos.x + 8, aptPos.y - 6);
-
-            // Detailed Runway for LJMS
-            if (apt.icao === "LJMS" && apt.runway10_28) {
-              const r1 = wgsToScreen(apt.runway10_28.rwy10[0], apt.runway10_28.rwy10[1], width, height);
-              const r2 = wgsToScreen(apt.runway10_28.rwy28[0], apt.runway10_28.rwy28[1], width, height);
-              ctx.lineWidth = 4;
-              ctx.strokeStyle = "#00ff66";
-              ctx.beginPath();
-              ctx.moveTo(r1.x, r1.y);
-              ctx.lineTo(r2.x, r2.y);
-              ctx.stroke();
-
-              ctx.font = "9px monospace";
-              ctx.fillStyle = "#00ff66";
-              ctx.fillText("RWY 10/28 (1200m)", r1.x - 20, r1.y - 8);
-            }
-            ctx.restore();
+      // 4. CRT Mode Slovenia Border Vector (only in CRT mode)
+      if (mapMode === "crt") {
+        ctx.save();
+        ctx.strokeStyle = "rgba(62, 224, 194, 0.4)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let first = true;
+        for (const [lat, lon] of SI_OUTLINE) {
+          const pt = map.latLngToContainerPoint([lat, lon]);
+          if (first) {
+            ctx.moveTo(pt.x, pt.y);
+            first = false;
+          } else {
+            ctx.lineTo(pt.x, pt.y);
           }
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 5. Airfield Runway Vectors (LJMS, LJMB, LJCE, LJLJ)
+      if (pclData?.aerodromes) {
+        for (const apt of pclData.aerodromes) {
+          const aptPt = map.latLngToContainerPoint([apt.arpLat, apt.arpLon]);
+          ctx.save();
+          ctx.strokeStyle = "#3ee0c2";
+          ctx.fillStyle = "#3ee0c2";
+          ctx.lineWidth = 1.8;
+
+          ctx.strokeRect(aptPt.x - 4, aptPt.y - 4, 8, 8);
+          ctx.font = "bold 11px 'Share Tech Mono', monospace";
+          ctx.fillText(`✈ ${apt.icao} · ${apt.name.split(" ")[0]}`, aptPt.x + 8, aptPt.y - 5);
+
+          // Detailed Runway
+          if (apt.runway10_28) {
+            const r1 = map.latLngToContainerPoint([apt.runway10_28.rwy10[0], apt.runway10_28.rwy10[1]]);
+            const r2 = map.latLngToContainerPoint([apt.runway10_28.rwy28[0], apt.runway10_28.rwy28[1]]);
+            ctx.lineWidth = 3.5;
+            ctx.strokeStyle = "#00ff66";
+            ctx.beginPath();
+            ctx.moveTo(r1.x, r1.y);
+            ctx.lineTo(r2.x, r2.y);
+            ctx.stroke();
+          }
+          ctx.restore();
         }
       }
 
-      // 4. PCL Bistatic Radar Reflection Ellipses (Reflectors of Opportunity)
-      if (showPclBistatic && pclData && pclData.targets) {
+      // 6. PCL Illuminators of Opportunity
+      for (const tx of PCL_TRANSMITTERS) {
+        const txPt = map.latLngToContainerPoint([tx.lat, tx.lon]);
         ctx.save();
-        ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 4]);
+        ctx.fillStyle = "#38bdf8";
+        ctx.strokeStyle = "#38bdf8";
+        ctx.beginPath();
+        ctx.arc(txPt.x, txPt.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = "9px 'Share Tech Mono', monospace";
+        ctx.fillText(`📻 ${tx.name} (${tx.freq})`, txPt.x + 8, txPt.y + 3);
+        ctx.restore();
+      }
+
+      // 7. PCL Bistatic Reflection Ellipses
+      if (showPclBistatic && pclData?.targets) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
 
         for (const t of pclData.targets.slice(0, 10)) {
           for (const pcl of t.pclReflections || []) {
@@ -201,7 +406,7 @@ export const AsterixCadRadarScope: React.FC<{
               ctx.beginPath();
               let first = true;
               for (const pt of pcl.ellipsePoints) {
-                const s = wgsToScreen(pt[0], pt[1], width, height);
+                const s = map.latLngToContainerPoint([pt[0], pt[1]]);
                 if (first) {
                   ctx.moveTo(s.x, s.y);
                   first = false;
@@ -217,33 +422,34 @@ export const AsterixCadRadarScope: React.FC<{
         ctx.restore();
       }
 
-      // 5. Radar Sweep Line & Phosphor Glow
+      // 8. Rotating Radar Sweep Beam
       sweepAngleRef.current = (sweepAngleRef.current + 1.2) % 360;
       const sweepRad = ((sweepAngleRef.current - 90) * Math.PI) / 180;
+
       ctx.save();
-      const sweepGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxRadius);
-      sweepGrad.addColorStop(0, "rgba(0, 255, 102, 0.4)");
+      const sweepGrad = ctx.createRadialGradient(centerPt.x, centerPt.y, 0, centerPt.x, centerPt.y, maxRadiusPx);
+      sweepGrad.addColorStop(0, "rgba(0, 255, 102, 0.35)");
       sweepGrad.addColorStop(1, "rgba(0, 255, 102, 0.0)");
 
       ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, maxRadius, sweepRad - 0.25, sweepRad);
+      ctx.moveTo(centerPt.x, centerPt.y);
+      ctx.arc(centerPt.x, centerPt.y, maxRadiusPx, sweepRad - 0.28, sweepRad);
       ctx.closePath();
       ctx.fillStyle = sweepGrad;
       ctx.fill();
 
       // Sharp Beam Line
       ctx.strokeStyle = "#00ff66";
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 2.0;
       ctx.shadowColor = "#00ff66";
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(sweepRad) * maxRadius, cy + Math.sin(sweepRad) * maxRadius);
+      ctx.moveTo(centerPt.x, centerPt.y);
+      ctx.lineTo(centerPt.x + Math.cos(sweepRad) * maxRadiusPx, centerPt.y + Math.sin(sweepRad) * maxRadiusPx);
       ctx.stroke();
       ctx.restore();
 
-      // 6. Draw Targets (FLARM, OGN Gliders, Drones, Mode S Aircraft, CAT 010 Surface)
+      // 9. All Live Moving Detected Targets
       const allTargets = [
         ...(pclData?.targets || []),
         ...planes.filter((p) => !pclData?.targets?.some((t: any) => t.hex === (p.icao || p.id || p.hex))),
@@ -251,8 +457,12 @@ export const AsterixCadRadarScope: React.FC<{
 
       for (const t of allTargets) {
         if (!t.lat || !t.lon) continue;
-        const s = wgsToScreen(t.lat, t.lon, width, height);
-        if (!s.inView) continue;
+        const pt = map.latLngToContainerPoint([t.lat, t.lon]);
+
+        // Visibility check
+        const distFromCenter = Math.sqrt((pt.x - centerPt.x) ** 2 + (pt.y - centerPt.y) ** 2);
+        if (scopeShape === "circle" && distFromCenter > maxRadiusPx) continue;
+        if (pt.x < -100 || pt.x > width + 100 || pt.y < -100 || pt.y > height + 100) continue;
 
         const isFlarmGlider = t.isGlider || t.category === "GLIDER" || t.isFlarm;
         const isDrone = t.isDrone || t.category === "DRONE_UAV";
@@ -262,12 +472,6 @@ export const AsterixCadRadarScope: React.FC<{
         if (!showFlarm && isFlarmGlider) continue;
         if (!showSurfaceMlat && isSurface) continue;
 
-        ctx.save();
-
-        // Target Color & Symbol
-        let color = "#00ff66"; // Standard ASTERIX Mode S
-        let symbol = "◇";
-
         const isMilHeli = Boolean(
           t.isMil ||
           t.role === "heli" ||
@@ -275,84 +479,109 @@ export const AsterixCadRadarScope: React.FC<{
           /S5-H/i.test(t.reg || "")
         );
 
+        // Color and Symbol
+        let color = "#00ff66"; // Standard ASTERIX Mode S
+        let symbol = "◇";
+
         if (isMilHeli) {
-          color = "#f43f5e"; // Military Helicopter Rose/Crimson
+          color = "#f43f5e"; // Tactical Rose / Crimson
           symbol = "🚁";
         } else if (isFlarmGlider) {
-          color = "#ffdd00"; // FLARM Glider Yellow
+          color = "#ffdd00"; // FLARM Amber
           symbol = "▲";
         } else if (isDrone) {
-          color = "#ff3366"; // Drone Red
+          color = "#ff3366"; // Drone Red/Magenta
           symbol = "⬢";
         } else if (isSurface) {
-          color = "#c084fc"; // Surface Movement Purple (CAT 010)
+          color = "#c084fc"; // Surface Movement Purple
           symbol = "●";
         } else if (t.isMil || t.mil) {
-          color = "#ff3333"; // Military Red
+          color = "#ff3333";
           symbol = "◆";
         }
 
-        // Draw Target Symbol
+        // Phosphor Flash when sweep passes target
+        const targetAngleDeg = ((Math.atan2(pt.y - centerPt.y, pt.x - centerPt.x) * 180) / Math.PI + 450) % 360;
+        const angleDiff = Math.abs(sweepAngleRef.current - targetAngleDeg);
+        const isIlluminated = angleDiff < 12 || angleDiff > 348;
+
+        ctx.save();
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.shadowColor = color;
-        ctx.shadowBlur = isMilHeli ? 10 : 6;
+        ctx.shadowBlur = isIlluminated ? 16 : isMilHeli ? 10 : 4;
 
-        ctx.font = isMilHeli ? "14px sans-serif" : "bold 13px monospace";
-        ctx.fillText(symbol, s.x - (isMilHeli ? 8 : 5), s.y + 5);
+        // Draw Icon / Glyph
+        ctx.font = isMilHeli ? "16px sans-serif" : "bold 13px monospace";
+        ctx.fillText(symbol, pt.x - (isMilHeli ? 8 : 5), pt.y + 5);
 
-        // Pulsing tactical ring for military helicopters
+        // Pulsing Tactical Lock Ring for military helicopter
         if (isMilHeli) {
-          ctx.save();
           ctx.strokeStyle = "#f43f5e";
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([2, 3]);
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([3, 3]);
           ctx.beginPath();
-          ctx.arc(s.x, s.y, 14, 0, Math.PI * 2);
+          ctx.arc(pt.x, pt.y, 16, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.restore();
         }
 
-        // Velocity Vector Lead Line (Ground Track)
-        const trk = (t.track || 0);
-        const gs = (t.speedKnots || t.speed || t.gs || 0);
-        if (gs > 10) {
-          const vLen = Math.min(45, (gs / 10) * 1.5);
+        // Velocity Vector Line
+        const trk = t.track || 0;
+        const gs = t.speedKnots || t.speed || t.gs || 0;
+        if (gs > 8) {
+          const vLen = Math.min(50, (gs / 10) * 1.6);
           const vRad = ((trk - 90) * Math.PI) / 180;
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.6;
           ctx.beginPath();
-          ctx.moveTo(s.x, s.y);
-          ctx.lineTo(s.x + Math.cos(vRad) * vLen, s.y + Math.sin(vRad) * vLen);
+          ctx.moveTo(pt.x, pt.y);
+          ctx.lineTo(pt.x + Math.cos(vRad) * vLen, pt.y + Math.sin(vRad) * vLen);
           ctx.stroke();
         }
 
-        // ASTERIX CAT 048 / 021 Data Block
+        // ASTERIX CAT Data Block Tag
         ctx.shadowBlur = 0;
         ctx.font = "10px 'Share Tech Mono', monospace";
-        const callsign = t.callsign || t.flight || t.hex?.toUpperCase() || "UNKNOWN";
-        const fl = t.altFt ? `FL${Math.round(t.altFt / 100).toString().padStart(3, "0")}` : isMilHeli ? "800FT" : "GND";
+        const callsign = t.callsign || t.flight || t.hex?.toUpperCase() || "AC";
+        const fl = t.altFt ? `FL${Math.round(t.altFt / 100).toString().padStart(3, "0")}` : isMilHeli ? "1250FT" : "GND";
         const spd = Math.round(gs);
 
-        // Data block text box
-        ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-        ctx.fillRect(s.x + 10, s.y - 18, 90, 34);
-        ctx.strokeStyle = `${color}66`;
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(s.x + 10, s.y - 18, 90, 34);
+        // Data Box
+        const isSelected = selectedTarget?.hex === t.hex || selectedTarget?.id === t.id;
+        ctx.fillStyle = isSelected ? "rgba(10, 26, 20, 0.95)" : "rgba(4, 12, 10, 0.78)";
+        ctx.fillRect(pt.x + 10, pt.y - 18, 92, 34);
+        ctx.strokeStyle = isSelected ? "#00ff66" : `${color}55`;
+        ctx.lineWidth = isSelected ? 1.5 : 0.8;
+        ctx.strokeRect(pt.x + 10, pt.y - 18, 92, 34);
 
         ctx.fillStyle = color;
-        ctx.fillText(callsign, s.x + 14, s.y - 6);
+        ctx.fillText(callsign, pt.x + 14, pt.y - 6);
         ctx.fillStyle = isMilHeli ? "#fca5a5" : "#cbd5e1";
-        ctx.fillText(`${fl}  ${spd}KT`, s.x + 14, s.y + 8);
+        ctx.fillText(`${fl}  ${spd}KT`, pt.x + 14, pt.y + 8);
 
         if (isMilHeli) {
           ctx.fillStyle = "#f43f5e";
           ctx.font = "bold 8px monospace";
-          ctx.fillText("🎖️ MIL", s.x + 62, s.y - 6);
-        } else if (t.isLjmsGateway) {
-          ctx.fillStyle = "#ffdd00";
-          ctx.font = "bold 8px monospace";
-          ctx.fillText("⚡ LJMS OGN", s.x + 58, s.y - 6);
+          ctx.fillText("🎖️ MIL", pt.x + 64, pt.y - 6);
+        }
+
+        // If Target is Selected: Draw Polar Slant Ray from Radar Origin
+        if (isSelected) {
+          ctx.strokeStyle = isMilHeli ? "#f43f5e" : "#00ff66";
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(centerPt.x, centerPt.y);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+
+          // If military helicopter with PCL, draw ray from Trdinov Vrh
+          const txPt = map.latLngToContainerPoint([45.7836, 15.3678]);
+          ctx.strokeStyle = "#38bdf8";
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(txPt.x, txPt.y);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
         }
 
         ctx.restore();
@@ -367,49 +596,20 @@ export const AsterixCadRadarScope: React.FC<{
       isRunning = false;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [activeCenter, rangeNm, showFlarm, onlyLjmsGateway, showSurfaceMlat, showPclBistatic, showSatellites, showPhosphorTrails, pclData, planes]);
-
-  // Click on canvas to select target
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickX = ((e.clientX - rect.left) / rect.width) * canvas.width;
-    const clickY = ((e.clientY - rect.top) / rect.height) * canvas.height;
-
-    const allTargets = [
-      ...(pclData?.targets || []),
-      ...planes,
-    ];
-
-    let closest = null;
-    let minDist = 25;
-
-    for (const t of allTargets) {
-      if (!t.lat || !t.lon) continue;
-      const s = wgsToScreen(t.lat, t.lon, canvas.width, canvas.height);
-      const d = Math.sqrt((s.x - clickX) ** 2 + (s.y - clickY) ** 2);
-      if (d < minDist) {
-        minDist = d;
-        closest = t;
-      }
-    }
-
-    setSelectedTarget(closest);
-    if (closest && onPinpointPlane) {
-      onPinpointPlane(closest.hex || closest.id);
-    }
-  };
+  }, [activeCenter, rangeNm, showFlarm, onlyLjmsGateway, showSurfaceMlat, showPclBistatic, scopeShape, mapMode, pclData, planes, selectedTarget]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "16px", maxWidth: "1600px", margin: "0 auto", color: "#e2e8f0" }}>
-      {/* Top Banner */}
+    <div
+      ref={containerRef}
+      className={`cad-scope-container ${isFullscreen ? "cad-scope-fullscreen" : ""}`}
+    >
+      {/* Top Tactical Command Header */}
       <div
         style={{
           background: "linear-gradient(135deg, rgba(4, 18, 14, 0.95), rgba(8, 28, 22, 0.95))",
           border: "1px solid rgba(0, 255, 102, 0.4)",
           borderRadius: "8px",
-          padding: "12px 18px",
+          padding: "10px 16px",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
@@ -419,50 +619,87 @@ export const AsterixCadRadarScope: React.FC<{
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 900, color: "#00ff66", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "8px" }}>
-            📐 ASTERIX CAD RADAR SCOPE & PCL PASSIVE COHERENT LOCATION
+          <h1
+            style={{
+              margin: 0,
+              fontSize: "18px",
+              fontWeight: 900,
+              color: "#00ff66",
+              letterSpacing: "1px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            📐 ASTERIX CAD RADAR SCOPE
           </h1>
           <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#94a3b8" }}>
-            Direct 868.2 MHz FLARM / OGN APRS Gateway (LJMS) · Mode S Surface Multilateration · Reflectors of Opportunity · ASTERIX CAT 010/021/048 Standards
+            Real-World GIS Map Underlay · Multi-Sensor ADS-B / Mode S · LJMS 868 MHz APRS Gateway · PCL Bistatic Passive Radar
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <span style={{ fontSize: "11px", fontWeight: 700, padding: "4px 8px", borderRadius: "4px", background: "rgba(0, 255, 102, 0.15)", color: "#00ff66", border: "1px solid #00ff66" }}>
-            ● APRS-IS: CONNECTED
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              padding: "4px 8px",
+              borderRadius: "4px",
+              background: "rgba(0, 255, 102, 0.15)",
+              color: "#00ff66",
+              border: "1px solid #00ff66",
+            }}
+          >
+            ● LIVE TARGETS: {planes.length}
           </span>
-          <span style={{ fontSize: "11px", fontWeight: 700, padding: "4px 8px", borderRadius: "4px", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #38bdf8" }}>
-            PCL BISTATIC: ACTIVE
-          </span>
-          <span style={{ fontSize: "11px", fontWeight: 700, padding: "4px 8px", borderRadius: "4px", background: "rgba(192, 132, 252, 0.15)", color: "#c084fc", border: "1px solid #c084fc" }}>
-            CAT 010 MLAT: LIVE
-          </span>
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            style={{
+              background: isFullscreen ? "rgba(255, 221, 0, 0.25)" : "rgba(0, 255, 102, 0.2)",
+              color: isFullscreen ? "#ffdd00" : "#00ff66",
+              border: `1px solid ${isFullscreen ? "#ffdd00" : "#00ff66"}`,
+              borderRadius: "4px",
+              padding: "6px 12px",
+              fontWeight: 800,
+              fontSize: "11px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            {isFullscreen ? "✕ EXIT FULLSCREEN" : "📱 IPHONE FULLSCREEN"}
+          </button>
         </div>
       </div>
 
-      {/* Interactive Controls Bar */}
+      {/* Interactive Controls & Filters Bar */}
       <div
         style={{
-          background: "rgba(10, 20, 16, 0.8)",
-          border: "1px solid rgba(0, 255, 102, 0.2)",
+          background: "rgba(10, 20, 16, 0.85)",
+          border: "1px solid rgba(0, 255, 102, 0.25)",
           borderRadius: "6px",
-          padding: "10px 14px",
+          padding: "8px 12px",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
           flexWrap: "wrap",
-          gap: "10px",
-          fontSize: "12px",
+          gap: "8px",
+          fontSize: "11px",
         }}
       >
         {/* Radar Origin Center */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ color: "#94a3b8", fontWeight: 700 }}>RADAR ORIGIN:</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "4px", overflowX: "auto", maxWidth: "100%" }}>
+          <span style={{ color: "#94a3b8", fontWeight: 700 }}>ORIGIN:</span>
           {RADAR_CENTERS.map((c) => (
             <button
               key={c.id}
               type="button"
-              onClick={() => setCenterId(c.id)}
+              onClick={() => {
+                setCenterId(c.id);
+                setTrackSelected(false);
+              }}
               style={{
                 background: centerId === c.id ? "#00ff66" : "rgba(255,255,255,0.05)",
                 color: centerId === c.id ? "#000" : "#cbd5e1",
@@ -470,8 +707,9 @@ export const AsterixCadRadarScope: React.FC<{
                 padding: "4px 8px",
                 borderRadius: "4px",
                 fontWeight: 700,
-                fontSize: "11px",
+                fontSize: "10px",
                 cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
             >
               {c.name.split(" ")[0]}
@@ -480,8 +718,8 @@ export const AsterixCadRadarScope: React.FC<{
         </div>
 
         {/* Range Scale */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ color: "#94a3b8", fontWeight: 700 }}>RANGE SCALE:</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+          <span style={{ color: "#94a3b8", fontWeight: 700 }}>SCALE:</span>
           {[15, 25, 40, 60, 100].map((rng) => (
             <button
               key={rng}
@@ -491,68 +729,54 @@ export const AsterixCadRadarScope: React.FC<{
                 background: rangeNm === rng ? "#38bdf8" : "rgba(255,255,255,0.05)",
                 color: rangeNm === rng ? "#000" : "#cbd5e1",
                 border: `1px solid ${rangeNm === rng ? "#38bdf8" : "rgba(255,255,255,0.1)"}`,
-                padding: "4px 8px",
+                padding: "4px 6px",
                 borderRadius: "4px",
                 fontWeight: 700,
-                fontSize: "11px",
+                fontSize: "10px",
                 cursor: "pointer",
               }}
             >
-              {rng} NM
+              {rng}NM
             </button>
           ))}
         </div>
 
-        {/* Layer Toggles */}
+        {/* Map Underlay & Scope Shape Modes */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => setShowFlarm(!showFlarm)}
+            onClick={() => setMapMode(mapMode === "dark" ? "satellite" : mapMode === "satellite" ? "crt" : "dark")}
             style={{
-              background: showFlarm ? "rgba(255, 221, 0, 0.2)" : "transparent",
-              color: showFlarm ? "#ffdd00" : "#94a3b8",
-              border: `1px solid ${showFlarm ? "#ffdd00" : "rgba(255,255,255,0.1)"}`,
+              background: "rgba(56, 189, 248, 0.15)",
+              color: "#38bdf8",
+              border: "1px solid #38bdf8",
               padding: "4px 8px",
               borderRadius: "4px",
               fontWeight: 700,
-              fontSize: "11px",
+              fontSize: "10px",
               cursor: "pointer",
             }}
           >
-            🟡 FLARM / OGN
+            🗺️ {mapMode.toUpperCase()} MAP
           </button>
+
           <button
             type="button"
-            onClick={() => setOnlyLjmsGateway(!onlyLjmsGateway)}
+            onClick={() => setScopeShape(scopeShape === "circle" ? "rect" : "circle")}
             style={{
-              background: onlyLjmsGateway ? "rgba(0, 255, 102, 0.25)" : "transparent",
-              color: onlyLjmsGateway ? "#00ff66" : "#94a3b8",
-              border: `1px solid ${onlyLjmsGateway ? "#00ff66" : "rgba(255,255,255,0.1)"}`,
+              background: scopeShape === "circle" ? "rgba(0, 255, 102, 0.15)" : "transparent",
+              color: scopeShape === "circle" ? "#00ff66" : "#cbd5e1",
+              border: `1px solid ${scopeShape === "circle" ? "#00ff66" : "rgba(255,255,255,0.1)"}`,
               padding: "4px 8px",
               borderRadius: "4px",
               fontWeight: 700,
-              fontSize: "11px",
+              fontSize: "10px",
               cursor: "pointer",
             }}
           >
-            ⚡ LJMS GATEWAY ONLY
+            {scopeShape === "circle" ? "⭕ CRT VIGNETTE" : "⬛ FULL BLEED"}
           </button>
-          <button
-            type="button"
-            onClick={() => setShowSurfaceMlat(!showSurfaceMlat)}
-            style={{
-              background: showSurfaceMlat ? "rgba(192, 132, 252, 0.2)" : "transparent",
-              color: showSurfaceMlat ? "#c084fc" : "#94a3b8",
-              border: `1px solid ${showSurfaceMlat ? "#c084fc" : "rgba(255,255,255,0.1)"}`,
-              padding: "4px 8px",
-              borderRadius: "4px",
-              fontWeight: 700,
-              fontSize: "11px",
-              cursor: "pointer",
-            }}
-          >
-            🟣 CAT 010 GROUND
-          </button>
+
           <button
             type="button"
             onClick={() => setShowPclBistatic(!showPclBistatic)}
@@ -563,256 +787,331 @@ export const AsterixCadRadarScope: React.FC<{
               padding: "4px 8px",
               borderRadius: "4px",
               fontWeight: 700,
-              fontSize: "11px",
+              fontSize: "10px",
               cursor: "pointer",
             }}
           >
-            🔵 PCL ELLIPSES
+            🔵 PCL BISTATIC
           </button>
         </div>
       </div>
 
-      {/* Main Grid: CAD Canvas Scope (Left) + ASTERIX / APRS Inspector (Right) */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 480px", gap: "14px", alignItems: "start" }}>
-        {/* CAD Canvas Scope */}
-        <div
-          style={{
-            background: "#040c0a",
-            borderRadius: "8px",
-            border: "2px solid #00ff66",
-            boxShadow: "0 0 25px rgba(0, 255, 102, 0.2), inset 0 0 40px rgba(0, 0, 0, 0.8)",
-            position: "relative",
-            overflow: "hidden",
-            height: "720px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <canvas
-            ref={canvasRef}
-            width={900}
-            height={720}
-            onClick={handleCanvasClick}
-            style={{ width: "100%", height: "100%", cursor: "crosshair", display: "block" }}
-          />
+      {/* Main Radar Layout: Scope (Left) + ASTERIX / APRS Inspector (Right) */}
+      <div className="cad-main-layout">
+        {/* Real Map Underlay & CAD Canvas Frame */}
+        <div className="cad-viewport-frame" style={{ display: mobileTab !== "scope" && !isFullscreen && window.innerWidth <= 1024 ? "none" : "block" }}>
+          {/* Leaflet Map Underlay */}
+          <div ref={mapContainerRef} className="cad-leaflet-map" />
 
-          {/* Scope Overlay HUD */}
-          <div
-            style={{
-              position: "absolute",
-              top: "12px",
-              left: "14px",
-              background: "rgba(0, 0, 0, 0.7)",
-              padding: "6px 12px",
-              borderRadius: "4px",
-              border: "1px solid rgba(0, 255, 102, 0.4)",
-              fontFamily: "'Share Tech Mono', monospace",
-              fontSize: "11px",
-              color: "#00ff66",
-              pointerEvents: "none",
-            }}
-          >
-            <div>ORIGIN: <b>{activeCenter.name}</b></div>
-            <div>COORDINATES: LAT {activeCenter.lat.toFixed(4)}° / LON {activeCenter.lon.toFixed(4)}°</div>
-            <div>SLANT SCALE: {rangeNm} NM · ELEVATION: {activeCenter.altM}m MSL</div>
-          </div>
-        </div>
+          {/* ASTERIX Phosphor CRT Overlay Canvas */}
+          <canvas ref={canvasRef} className="cad-radar-overlay-canvas" />
 
-        {/* Right Panel: Selected Target Data Block + Live APRS Raw Stream */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px", height: "720px" }}>
-          {/* Target Interrogation Block */}
-          <div
-            style={{
-              background: "rgba(10, 18, 16, 0.9)",
-              border: "1px solid rgba(0, 255, 102, 0.3)",
-              borderRadius: "8px",
-              padding: "14px",
-              fontFamily: "'Share Tech Mono', monospace",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "6px" }}>
-              <span style={{ fontSize: "13px", fontWeight: 900, color: "#00ff66" }}>
-                🎯 ASTERIX TARGET DATA BLOCK
-              </span>
-              <span style={{ fontSize: "10px", color: "#94a3b8" }}>
-                CAT 048 / CAT 021 / CAT 010
-              </span>
-            </div>
-
-            {selectedTarget ? (
-              <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#94a3b8" }}>CALLSIGN:</span>
-                  <b style={{ color: "#00ff66" }}>{selectedTarget.callsign || selectedTarget.flight || "UNKNOWN"}</b>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#94a3b8" }}>TRANSPONDER / FLARM ID:</span>
-                  <b style={{ color: "#38bdf8" }}>{selectedTarget.hex?.toUpperCase()}</b>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#94a3b8" }}>CATEGORY:</span>
-                  <span style={{ color: selectedTarget.isGlider ? "#ffdd00" : selectedTarget.isDrone ? "#ff3366" : "#cbd5e1", fontWeight: 700 }}>
-                    {selectedTarget.category || "AIRCRAFT"} ({selectedTarget.protocol || "MODE_S"})
-                  </span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#94a3b8" }}>ALTITUDE / FL:</span>
-                  <b>{selectedTarget.altFt ? `${selectedTarget.altFt} ft (FL${Math.round(selectedTarget.altFt / 100)})` : "SURFACE"}</b>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#94a3b8" }}>GROUND SPEED / TRACK:</span>
-                  <b>{Math.round(selectedTarget.speedKnots || selectedTarget.speed || 0)} KT @ {Math.round(selectedTarget.track || 0)}°</b>
-                </div>
-
-                {/* Military / Tactical Asset Card */}
-                {(selectedTarget.isMil || /RANGR|LSV|SVN|506e6/i.test(`${selectedTarget.callsign || selectedTarget.flight || ""} ${selectedTarget.hex || ""}`) || /S5-H/i.test(selectedTarget.reg || "")) && (
-                  <div style={{ background: "rgba(244, 63, 94, 0.12)", border: "1px solid #f43f5e", padding: "8px 10px", borderRadius: "4px", marginTop: "4px" }}>
-                    <div style={{ color: "#f43f5e", fontWeight: 800, fontSize: "11px", marginBottom: "4px" }}>
-                      🎖️ MILITARY / POLICE TACTICAL TARGET
-                    </div>
-                    <div style={{ color: "#fecdd3", fontSize: "11px" }}>
-                      UNIT: <b>{selectedTarget.ownOp || "Slovenska vojska / Policija"}</b>
-                    </div>
-                    <div style={{ color: "#fecdd3", fontSize: "11px" }}>
-                      AIRFRAME: <b>{selectedTarget.model || "Bell 206 JetRanger"}</b> · REG: <b>{selectedTarget.reg || "S5-HZJ"}</b>
-                    </div>
-                    <div style={{ color: "#38bdf8", fontSize: "11px", marginTop: "4px" }}>
-                      PCL ROTOR CHOP: <b>13.1 Hz</b> (2-blade @ 394 RPM) · Spread ±140 Hz
-                    </div>
-                    <div style={{ color: "#38bdf8", fontSize: "11px" }}>
-                      ILLUMINATOR: <b>RTV Trdinov Vrh (90.9 MHz, 100 kW ERP)</b>
-                    </div>
-                  </div>
-                )}
-                {selectedTarget.receiverStation && (
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "#94a3b8" }}>RECEIVER GATEWAY:</span>
-                    <b style={{ color: selectedTarget.isLjmsGateway ? "#00ff66" : "#cbd5e1" }}>
-                      {selectedTarget.receiverStation} {selectedTarget.isLjmsGateway ? "⚡ (LJMS)" : ""}
-                    </b>
-                  </div>
-                )}
-                {selectedTarget.rfMetrics && (
-                  <div style={{ background: "#050d0a", padding: "8px", borderRadius: "4px", marginTop: "4px", fontSize: "11px" }}>
-                    <div style={{ color: "#3ee0c2", fontWeight: 700 }}>RAW 868 MHz RF TELEMETRY:</div>
-                    <div>SNR: {selectedTarget.rfMetrics.snrDb ?? "--"} dB · FREQ OFFSET: {selectedTarget.rfMetrics.freqOffset ?? "0 kHz"}</div>
-                    <div>CLIMB: {selectedTarget.rfMetrics.climbMps?.toFixed(1) ?? "0"} m/s · TURN: {selectedTarget.rfMetrics.turnRate ?? "0"} deg/s</div>
-                  </div>
-                )}
-                {selectedTarget.asterixCat048Hex && (
-                  <div style={{ marginTop: "6px" }}>
-                    <div style={{ fontSize: "10px", color: "#94a3b8" }}>RAW ASTERIX CAT 048 HEX DATAGRAM:</div>
-                    <pre style={{ margin: "2px 0 0", padding: "6px", background: "#05090b", color: "#00ff66", fontSize: "10px", overflowX: "auto", borderRadius: "3px" }}>
-                      {selectedTarget.asterixCat048Hex}
-                    </pre>
-                  </div>
-                )}
+          {/* Floating HUD: Top Left Origin Stats */}
+          <div className="cad-floating-bar cad-hud-top-left">
+            <div>
+              <div style={{ color: "#00ff66", fontWeight: 700 }}>
+                ● {activeCenter.name} ({activeCenter.icao || "RADAR"})
               </div>
-            ) : (
-              <p style={{ fontSize: "12px", color: "#64748b", margin: "14px 0" }}>
-                Click any aircraft, glider, or drone target on the CAD scope to inspect real-time ASTERIX data blocks and RF telemetry.
-              </p>
+              <div style={{ color: "#94a3b8", fontSize: "10px" }}>
+                LAT {activeCenter.lat.toFixed(4)}° / LON {activeCenter.lon.toFixed(4)}° · SCALE {rangeNm} NM
+              </div>
+            </div>
+          </div>
+
+          {/* Floating HUD: Top Right Actions */}
+          <div className="cad-floating-bar cad-hud-top-right">
+            <button
+              type="button"
+              onClick={() => {
+                mapRef.current?.setView([activeCenter.lat, activeCenter.lon], rangeToZoom(rangeNm), { animate: true });
+                setTrackSelected(false);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#00ff66",
+                cursor: "pointer",
+                fontWeight: 700,
+                fontSize: "10px",
+              }}
+            >
+              🎯 RECENTER
+            </button>
+            {selectedTarget && (
+              <button
+                type="button"
+                onClick={() => setTrackSelected(!trackSelected)}
+                style={{
+                  background: trackSelected ? "rgba(0, 255, 102, 0.3)" : "transparent",
+                  border: `1px solid ${trackSelected ? "#00ff66" : "rgba(255,255,255,0.2)"}`,
+                  color: trackSelected ? "#00ff66" : "#cbd5e1",
+                  borderRadius: "3px",
+                  padding: "2px 6px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: "10px",
+                }}
+              >
+                {trackSelected ? "LOCKED" : "TRACK"}
+              </button>
             )}
           </div>
 
-          {/* Live Raw APRS & OGN Packet Stream */}
-          <div
-            style={{
-              flex: 1,
-              background: "rgba(10, 18, 16, 0.9)",
-              border: "1px solid rgba(0, 255, 102, 0.3)",
-              borderRadius: "8px",
-              padding: "14px",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "13px", fontWeight: 900, color: "#ffdd00", fontFamily: "monospace" }}>
-                📡 LIVE 868 MHz APRS PACKET STREAM
-              </span>
-              <div style={{ display: "flex", gap: "4px" }}>
+          {/* Mobile Floating Quick Target Sheet */}
+          {selectedTarget && (
+            <div className="cad-target-sheet">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "15px", fontWeight: 900, color: selectedTarget.isMil ? "#f43f5e" : "#00ff66" }}>
+                    {selectedTarget.callsign || selectedTarget.flight || selectedTarget.id}
+                  </span>
+                  <span style={{ color: "#38bdf8", fontSize: "11px" }}>
+                    {selectedTarget.hex?.toUpperCase()}
+                  </span>
+                  {selectedTarget.isMil && (
+                    <span style={{ background: "#f43f5e", color: "#fff", fontSize: "9px", padding: "1px 5px", borderRadius: "3px", fontWeight: 700 }}>
+                      🎖️ MILITARY
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setTerminalFilter("all")}
-                  style={{
-                    background: terminalFilter === "all" ? "#ffdd00" : "transparent",
-                    color: terminalFilter === "all" ? "#000" : "#ffdd00",
-                    border: "1px solid #ffdd00",
-                    padding: "2px 6px",
-                    borderRadius: "3px",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
+                  onClick={() => setSelectedTarget(null)}
+                  style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "14px" }}
                 >
-                  ALL ({rawPackets.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTerminalFilter("ljms")}
-                  style={{
-                    background: terminalFilter === "ljms" ? "#00ff66" : "transparent",
-                    color: terminalFilter === "ljms" ? "#000" : "#00ff66",
-                    border: "1px solid #00ff66",
-                    padding: "2px 6px",
-                    borderRadius: "3px",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  LJMS GATEWAY
+                  ✕
                 </button>
               </div>
-            </div>
 
+              <div style={{ display: "flex", gap: "12px", marginTop: "6px", fontSize: "11px", color: "#cbd5e1" }}>
+                <span>ALT: <b>{selectedTarget.altFt ? `${selectedTarget.altFt} ft` : "GND"}</b></span>
+                <span>GS: <b>{Math.round(selectedTarget.speedKnots || selectedTarget.speed || selectedTarget.gs || 0)} KT</b></span>
+                <span>TRK: <b>{Math.round(selectedTarget.track || 0)}°</b></span>
+                <span>SQK: <b>{selectedTarget.squawk || "7000"}</b></span>
+              </div>
+
+              {selectedTarget.ownOp && (
+                <div style={{ fontSize: "10px", color: "#fca5a5", marginTop: "4px" }}>
+                  UNIT: <b>{selectedTarget.ownOp}</b> ({selectedTarget.model || "Airframe"})
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right Inspector Panel (Desktop) or Tab Content (Mobile) */}
+        <div
+          style={{
+            display: mobileTab === "scope" && !isFullscreen && window.innerWidth <= 1024 ? "none" : "flex",
+            flexDirection: "column",
+            gap: "12px",
+            minHeight: "480px",
+          }}
+        >
+          {/* Target Data Block */}
+          {(mobileTab === "target" || window.innerWidth > 1024) && (
             <div
               style={{
-                flex: 1,
-                overflowY: "auto",
-                background: "#030806",
-                borderRadius: "4px",
-                padding: "8px",
-                fontFamily: "monospace",
-                fontSize: "10px",
-                color: "#cbd5e1",
-                display: "flex",
-                flexDirection: "column",
-                gap: "6px",
+                background: "rgba(10, 18, 16, 0.9)",
+                border: "1px solid rgba(0, 255, 102, 0.3)",
+                borderRadius: "8px",
+                padding: "14px",
+                fontFamily: "'Share Tech Mono', monospace",
               }}
             >
-              {rawPackets.map((pkt, i) => (
-                <div
-                  key={i}
-                  style={{
-                    padding: "6px",
-                    background: pkt.isLjms ? "rgba(0, 255, 102, 0.08)" : "rgba(255, 255, 255, 0.03)",
-                    borderLeft: `2px solid ${pkt.isLjms ? "#00ff66" : "#ffdd00"}`,
-                    borderRadius: "2px",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8" }}>
-                    <span>{new Date(pkt.timestamp).toLocaleTimeString()}</span>
-                    <b style={{ color: pkt.isLjms ? "#00ff66" : "#38bdf8" }}>
-                      qAS,{pkt.receiver || "UNKNOWN"} {pkt.isLjms ? "⚡ LJMS AIRPORT" : ""}
-                    </b>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "6px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 900, color: "#00ff66" }}>
+                  🎯 ASTERIX TARGET DATA BLOCK
+                </span>
+                <span style={{ fontSize: "10px", color: "#94a3b8" }}>
+                  CAT 048 / CAT 021 / CAT 010
+                </span>
+              </div>
+
+              {selectedTarget ? (
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>CALLSIGN:</span>
+                    <b style={{ color: "#00ff66" }}>{selectedTarget.callsign || selectedTarget.flight || "UNKNOWN"}</b>
                   </div>
-                  <div style={{ color: "#e2e8f0", wordBreak: "break-all", margin: "2px 0" }}>
-                    {pkt.raw}
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>TRANSPONDER / ICAO:</span>
+                    <b style={{ color: "#38bdf8" }}>{selectedTarget.hex?.toUpperCase()}</b>
                   </div>
-                  {pkt.asterixCat021 && (
-                    <div style={{ color: "#00ff66", fontSize: "9px" }}>
-                      <b>CAT 021:</b> {pkt.asterixCat021.slice(0, 32)}...
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>CATEGORY:</span>
+                    <span style={{ color: selectedTarget.isGlider ? "#ffdd00" : selectedTarget.isDrone ? "#ff3366" : "#cbd5e1", fontWeight: 700 }}>
+                      {selectedTarget.category || "AIRCRAFT"} ({selectedTarget.protocol || "MODE_S"})
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>ALTITUDE / FL:</span>
+                    <b>{selectedTarget.altFt ? `${selectedTarget.altFt} ft (FL${Math.round(selectedTarget.altFt / 100)})` : "SURFACE"}</b>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>GROUND SPEED / TRACK:</span>
+                    <b>{Math.round(selectedTarget.speedKnots || selectedTarget.speed || selectedTarget.gs || 0)} KT @ {Math.round(selectedTarget.track || 0)}°</b>
+                  </div>
+
+                  {/* Tactical Military Helicopter Card */}
+                  {(selectedTarget.isMil || /RANGR|LSV|SVN|506e6/i.test(`${selectedTarget.callsign || selectedTarget.flight || ""} ${selectedTarget.hex || ""}`) || /S5-H/i.test(selectedTarget.reg || "")) && (
+                    <div style={{ background: "rgba(244, 63, 94, 0.12)", border: "1px solid #f43f5e", padding: "8px 10px", borderRadius: "4px", marginTop: "4px" }}>
+                      <div style={{ color: "#f43f5e", fontWeight: 800, fontSize: "11px", marginBottom: "4px" }}>
+                        🎖️ MILITARY / POLICE TACTICAL ASSET
+                      </div>
+                      <div style={{ color: "#fecdd3", fontSize: "11px" }}>
+                        UNIT: <b>{selectedTarget.ownOp || "Slovenska vojska / Policija"}</b>
+                      </div>
+                      <div style={{ color: "#fecdd3", fontSize: "11px" }}>
+                        AIRFRAME: <b>{selectedTarget.model || "Bell 206 JetRanger"}</b> · REG: <b>{selectedTarget.reg || "S5-HZJ"}</b>
+                      </div>
+                      <div style={{ color: "#38bdf8", fontSize: "11px", marginTop: "4px" }}>
+                        PCL ROTOR CHOP: <b>13.1 Hz</b> (2-blade @ 394 RPM) · Doppler ±140 Hz
+                      </div>
+                      <div style={{ color: "#38bdf8", fontSize: "11px" }}>
+                        ILLUMINATOR: <b>RTV Trdinov Vrh (90.9 MHz, 100 kW ERP)</b>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedTarget.receiverStation && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#94a3b8" }}>RECEIVER GATEWAY:</span>
+                      <b style={{ color: selectedTarget.isLjmsGateway ? "#00ff66" : "#cbd5e1" }}>
+                        {selectedTarget.receiverStation} {selectedTarget.isLjmsGateway ? "⚡ (LJMS)" : ""}
+                      </b>
                     </div>
                   )}
                 </div>
-              ))}
+              ) : (
+                <p style={{ fontSize: "12px", color: "#64748b", margin: "14px 0" }}>
+                  Tap any live aircraft, military helicopter, or glider on the map to inspect real-time ASTERIX CAT 048 data blocks.
+                </p>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Live APRS Packet Stream */}
+          {(mobileTab === "aprs" || window.innerWidth > 1024) && (
+            <div
+              style={{
+                flex: 1,
+                background: "rgba(10, 18, 16, 0.9)",
+                border: "1px solid rgba(0, 255, 102, 0.3)",
+                borderRadius: "8px",
+                padding: "14px",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                minHeight: "280px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 900, color: "#ffdd00", fontFamily: "monospace" }}>
+                  📡 LIVE 868 MHz APRS PACKET STREAM
+                </span>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setTerminalFilter("all")}
+                    style={{
+                      background: terminalFilter === "all" ? "#ffdd00" : "transparent",
+                      color: terminalFilter === "all" ? "#000" : "#ffdd00",
+                      border: "1px solid #ffdd00",
+                      padding: "2px 6px",
+                      borderRadius: "3px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ALL ({rawPackets.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTerminalFilter("ljms")}
+                    style={{
+                      background: terminalFilter === "ljms" ? "#00ff66" : "transparent",
+                      color: terminalFilter === "ljms" ? "#000" : "#00ff66",
+                      border: "1px solid #00ff66",
+                      padding: "2px 6px",
+                      borderRadius: "3px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    LJMS ONLY
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  background: "#030806",
+                  borderRadius: "4px",
+                  padding: "8px",
+                  fontFamily: "monospace",
+                  fontSize: "10px",
+                  color: "#cbd5e1",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  maxHeight: "340px",
+                }}
+              >
+                {rawPackets.map((pkt, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: "6px",
+                      background: pkt.isLjms ? "rgba(0, 255, 102, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                      borderLeft: `2px solid ${pkt.isLjms ? "#00ff66" : "#ffdd00"}`,
+                      borderRadius: "2px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8" }}>
+                      <span>{new Date(pkt.timestamp).toLocaleTimeString()}</span>
+                      <b style={{ color: pkt.isLjms ? "#00ff66" : "#38bdf8" }}>
+                        qAS,{pkt.receiver || "UNKNOWN"} {pkt.isLjms ? "⚡ LJMS AIRPORT" : ""}
+                      </b>
+                    </div>
+                    <div style={{ color: "#e2e8f0", wordBreak: "break-all", margin: "2px 0" }}>
+                      {pkt.raw}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* Mobile Bottom Segmented Tab Switcher (iPhone 17 Pro Max) */}
+      <div className="cad-mobile-tabs">
+        <button
+          type="button"
+          className={`cad-mobile-tab-btn ${mobileTab === "scope" ? "active" : ""}`}
+          onClick={() => setMobileTab("scope")}
+        >
+          🗺️ RADAR SCOPE
+        </button>
+        <button
+          type="button"
+          className={`cad-mobile-tab-btn ${mobileTab === "target" ? "active" : ""}`}
+          onClick={() => setMobileTab("target")}
+        >
+          🎯 TARGET DATA {selectedTarget ? "(1)" : ""}
+        </button>
+        <button
+          type="button"
+          className={`cad-mobile-tab-btn ${mobileTab === "aprs" ? "active" : ""}`}
+          onClick={() => setMobileTab("aprs")}
+        >
+          📡 APRS STREAM ({rawPackets.length})
+        </button>
       </div>
     </div>
   );

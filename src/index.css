@@ -115,7 +115,14 @@ button, a { font: inherit; color: inherit; touch-action: manipulation; -webkit-t
 .page.map-full.radar .below.hide,
 .page.map-full.data .below.hide { display: none; }
 .page.map-full.radar .map-hud.ac,
-.page.map-full.data .map-hud.ac { max-height: min(48vh, 440px); }
+.page.map-full.data .map-hud.ac {
+  left: 12px;
+  right: auto;
+  bottom: 64px;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: min(48vh, 420px);
+}
 .page.map-full.radar .tape,
 .page.map-full.data .tape { margin: 0; border: 0; border-radius: 16px 16px 0 0; max-height: 42vh; overflow: auto; }
 .page.map-full.radar .tape header,
@@ -544,9 +551,91 @@ button, a { font: inherit; color: inherit; touch-action: manipulation; -webkit-t
   padding: 10px 12px; backdrop-filter: blur(8px);
 }
 .map-hud.ac {
-  max-height: min(46vh, 420px);
-  overflow: auto;
+  left: 12px;
+  right: auto;
+  bottom: 64px;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(62, 224, 194, 0.35);
+  border-radius: 14px;
+  z-index: 1001;
+}
+
+.map-hud.ac:has(.hud-mini-strip) {
+  width: auto;
+  max-width: calc(100vw - 24px);
+  padding: 8px 12px;
+}
+
+/* PlaneHud top bar controls */
+.hud-card-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 8px;
+}
+.hud-btn-group,
+.min-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.hud-ctrl-btn {
+  background: #152636;
+  border: 1px solid rgba(62, 224, 194, 0.35);
+  color: #3ee0c2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+.hud-ctrl-btn:hover {
+  background: #1f384f;
+  border-color: #3ee0c2;
+  color: #fff;
+}
+.hud-ctrl-btn.close {
+  background: rgba(255, 77, 77, 0.15);
+  border-color: rgba(255, 77, 77, 0.4);
+  color: #ff6b6b;
+}
+.hud-ctrl-btn.close:hover {
+  background: rgba(255, 77, 77, 0.3);
+  border-color: #ff6b6b;
+  color: #fff;
+}
+
+/* Minimized HUD strip */
+.hud-mini-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+.min-label {
+  font-size: 12px;
+  color: #eaf1f8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.min-label b {
+  color: #3ee0c2;
 }
 .map-hud strong { display: block; }
 .map-hud small { color: var(--dim); }
@@ -656,3 +745,476 @@ button, a { font: inherit; color: inherit; touch-action: manipulation; -webkit-t
   .omap { height: 70vh; }
   .page.map-full .omap { height: 100%; }
 }
+
+/* Modern Interactive Map Toolbar & Overlays */
+.map-wrap { position: relative; width: 100%; height: 100%; min-height: 520px; }
+.map-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: rgba(7, 16, 24, 0.82);
+  backdrop-filter: blur(12px);
+  padding: 6px 8px;
+  border-radius: 30px;
+  border: 1px solid rgba(62, 224, 194, 0.28);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.map-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(16, 32, 44, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  color: #8da4b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+.map-tool-btn:hover {
+  background: rgba(26, 48, 66, 0.95);
+  color: #eaf1f8;
+  border-color: rgba(62, 224, 194, 0.4);
+}
+.map-tool-btn.active {
+  background: rgba(62, 224, 194, 0.16);
+  color: #3ee0c2;
+  border-color: #3ee0c2;
+  box-shadow: 0 0 12px rgba(62, 224, 194, 0.3);
+}
+.map-tool-btn .dot-ind {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+/* Tactical ASTERIX CAT 048 Map HUD */
+.asterix-map-hud {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: rgba(7, 16, 24, 0.88);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(62, 224, 194, 0.35);
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.asterix-map-hud .hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(62, 224, 194, 0.2);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+.asterix-map-hud .hud-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #3ee0c2;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asterix-map-hud .live-blip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3ee0c2;
+  box-shadow: 0 0 8px #3ee0c2;
+  animation: pulse 1.5s infinite;
+}
+.asterix-map-hud .hud-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 12px;
+  font-size: 11px;
+}
+.asterix-map-hud .hud-item {
+  display: flex;
+  flex-direction: column;
+}
+.asterix-map-hud .hud-label {
+  font-size: 9px;
+  color: #728a9c;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.asterix-map-hud .hud-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: #eaf1f8;
+}
+.asterix-map-hud .hud-val.cyan { color: #3ee0c2; }
+.asterix-map-hud .hud-val.amber { color: #f5d742; }
+.asterix-map-hud .hud-val.coral { color: #ff8a3d; }
+
+/* Altitude Gradient Legend Bar */
+.alt-legend-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 14px;
+  z-index: 1000;
+  background: rgba(7, 16, 24, 0.85);
+  backdrop-filter: blur(10px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: ui-monospace, monospace;
+}
+.alt-legend-title {
+  font-size: 9px;
+  color: #8da4b8;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.alt-gradient-strip {
+  width: 180px;
+  height: 7px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #ff4d4d, #ff8a3d, #f5d742, #7ee05a, #3ee07a, #3ee0c2, #6aa8ff);
+}
+.alt-legend-stops {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #a4bccf;
+}
+
+/* Radar Station Pin & Sweep */
+.radar-station-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+.radar-station-pin svg {
+  filter: drop-shadow(0 0 8px #3ee0c2);
+}
+.radar-station-label {
+  background: rgba(7, 16, 24, 0.9);
+  border: 1px solid #3ee0c2;
+  color: #3ee0c2;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-top: 2px;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+/* Radar Radials & Rings Labels */
+.radar-ring-text {
+  background: rgba(7, 16, 24, 0.7);
+  color: #3ee0c2;
+  border: 1px solid rgba(62, 224, 194, 0.4);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: monospace;
+  white-space: nowrap;
+}
+.radar-radial-text {
+  color: rgba(62, 224, 194, 0.7);
+  font-size: 8px;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+/* Polar Slant Vector Badge */
+.polar-slant-badge {
+  background: rgba(7, 16, 24, 0.92);
+  border: 1px solid #3ee0c2;
+  border-radius: 6px;
+  padding: 3px 6px;
+  color: #3ee0c2;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: monospace;
+  box-shadow: 0 0 10px rgba(62, 224, 194, 0.4);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Dronetag Operations Pin & Box */
+.dronetag-ops-pin {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 138, 61, 0.18);
+  border: 1px solid #ff8a3d;
+  color: #ff8a3d;
+  border-radius: 12px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: monospace;
+  box-shadow: 0 0 10px rgba(255, 138, 61, 0.35);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dronetag-ops-pin svg { width: 12px; height: 12px; }
+
+/* NOTAM Hazard Pin */
+.notam-pin {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 93, 93, 0.18);
+  border: 1px solid #ff5d5d;
+  color: #ff5d5d;
+  border-radius: 12px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: monospace;
+  box-shadow: 0 0 8px rgba(255, 93, 93, 0.35);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* METAR Weather Station Pin */
+.metar-wx-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+.metar-wx-pin.VFR { background: rgba(62, 224, 122, 0.2); border: 1px solid #3ee07a; color: #3ee07a; }
+.metar-wx-pin.MVFR { background: rgba(245, 185, 66, 0.2); border: 1px solid #f5b942; color: #f5b942; }
+.metar-wx-pin.IFR { background: rgba(255, 138, 61, 0.2); border: 1px solid #ff8a3d; color: #ff8a3d; }
+.metar-wx-pin.LIFR { background: rgba(255, 93, 93, 0.2); border: 1px solid #ff5d5d; color: #ff5d5d; }
+
+/* ASTERIX CAD Scope Real Map & Mobile Fullscreen Styles */
+.cad-scope-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  max-width: 1600px;
+  margin: 0 auto;
+  color: #e2e8f0;
+  min-height: calc(100vh - 120px);
+}
+
+.cad-scope-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99999 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left) !important;
+  background: #020806 !important;
+  border-radius: 0 !important;
+}
+
+.cad-main-layout {
+  display: grid;
+  grid-template-columns: 1fr 480px;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .cad-main-layout {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .cad-scope-container {
+    padding: 6px;
+    gap: 8px;
+  }
+}
+
+.cad-viewport-frame {
+  position: relative;
+  background: #040c0a;
+  border-radius: 8px;
+  border: 2px solid #00ff66;
+  box-shadow: 0 0 30px rgba(0, 255, 102, 0.25), inset 0 0 50px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
+  height: 720px;
+  min-height: 480px;
+}
+
+@media (max-width: 1024px) {
+  .cad-viewport-frame {
+    height: 65vh;
+    min-height: 420px;
+  }
+}
+
+.cad-scope-fullscreen .cad-viewport-frame {
+  height: 100% !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
+
+.cad-leaflet-map {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.cad-radar-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Floating Glass HUD Controls */
+.cad-floating-bar {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(4, 18, 14, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 255, 102, 0.35);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: 'Share Tech Mono', monospace;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.cad-hud-top-left {
+  top: 10px;
+  left: 10px;
+}
+
+.cad-hud-top-right {
+  top: 10px;
+  right: 10px;
+}
+
+.cad-hud-bottom-left {
+  bottom: 12px;
+  left: 12px;
+}
+
+.cad-hud-bottom-right {
+  bottom: 12px;
+  right: 12px;
+}
+
+@media (max-width: 768px) {
+  .cad-hud-top-left {
+    top: 8px;
+    left: 8px;
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+  .cad-hud-top-right {
+    top: 8px;
+    right: 8px;
+    gap: 4px;
+    padding: 4px 6px;
+  }
+  .cad-hud-bottom-left {
+    bottom: 8px;
+    left: 8px;
+    gap: 4px;
+    padding: 4px 6px;
+  }
+}
+
+/* Mobile Segmented Bottom Tabs */
+.cad-mobile-tabs {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .cad-mobile-tabs {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    background: rgba(4, 18, 14, 0.9);
+    border: 1px solid rgba(0, 255, 102, 0.3);
+    border-radius: 8px;
+    padding: 4px;
+  }
+  .cad-mobile-tab-btn {
+    flex: 1;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .cad-mobile-tab-btn.active {
+    background: rgba(0, 255, 102, 0.2);
+    border-color: #00ff66;
+    color: #00ff66;
+    box-shadow: 0 0 10px rgba(0, 255, 102, 0.2);
+  }
+}
+
+/* Mobile Quick Target Sheet */
+.cad-target-sheet {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 12;
+  background: rgba(6, 20, 16, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid #00ff66;
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85);
+  font-family: 'Share Tech Mono', monospace;
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+
