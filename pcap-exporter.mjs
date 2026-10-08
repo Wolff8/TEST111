@@ -217,3 +217,90 @@ export function getNetworkInterfaceSummary() {
     },
   };
 }
+
+/** Record a LoRaWAN IoT environmental/water sensor frame */
+export function recordLoRaPacket(node) {
+  const buf = Buffer.alloc(19);
+  buf[0] = 0x40; // Unconfirmed Data Up
+  buf.writeUInt32BE(0x260b14a2, 1);
+  buf[5] = 0x00;
+  buf.writeUInt16LE((node.fcnt || 14820) & 0xffff, 6);
+  buf[8] = 0x02; // FPort 2
+  const levelMm = Math.round((node.currentLevelCm || 48) * 10);
+  const batMv = Math.round((node.batteryV || 3.6) * 1000);
+  const tempDc = Math.round((node.waterTempC || 15) * 10);
+  buf.writeUInt16BE(levelMm, 9);
+  buf.writeUInt16BE(batMv, 11);
+  buf.writeInt16BE(tempDc, 13);
+  buf.writeUInt32BE(0xa8f2b104, 15);
+
+  return recordNetworkPacket({
+    protocol: "LORAWAN",
+    payload: buf,
+    srcIp: "10.42.0.25",
+    dstIp: "172.16.1.10",
+    srcPort: 1700,
+    dstPort: 1700,
+    info: `LoRaWAN Uplink · ${node.name} · Vodostaj: ${node.currentLevelCm} cm · Bat: ${node.batteryV}V (${node.sf})`,
+    dissection: {
+      category: 868,
+      catTitle: "LoRaWAN MAC EU868 Uplink Protocol",
+      items: [
+        { tag: "MHDR", name: "MAC Header", value: "Unconfirmed Data Up (0x40)" },
+        { tag: "DevAddr", name: "End-Device Address", value: "26:0B:14:A2" },
+        { tag: "FCnt", name: "Frame Counter", value: String(node.fcnt || 14820) },
+        { tag: "FPort", name: "Application Port", value: "2 (Environmental Hydro Telemetry)" },
+        { tag: "Level", name: "Water Depth Level", value: `${node.currentLevelCm} cm` },
+        { tag: "Battery", name: "Battery Voltage", value: `${node.batteryV} V` },
+        { tag: "Temp", name: "Water Temperature", value: `${node.waterTempC} °C` },
+        { tag: "DevEUI", name: "LoRaWAN Device EUI", value: node.devEui },
+        { tag: "Gateway", name: "Receiving Gateway", value: node.gw },
+      ],
+    },
+  });
+}
+
+/** Record a Nokia GSM-R / Siemens ETCS Level 2 Euroradio frame */
+export function recordGsmrPacket(train) {
+  if (!train) return null;
+  const number = train.number || train.trainId || "SŽ-TRAIN";
+  const loco = train.locomotive || "Siemens Vectron";
+  const ma = train.etcs?.movementAuthorityM ?? 4500;
+  const vPerm = train.etcs?.permittedSpeedKmh ?? (train.speedKmh || 80);
+  const mode = train.etcs?.mode ?? "FS (Full Supervision)";
+  const balise = train.etcs?.baliseGroupId ?? "BG-MS-01";
+  const bts = train.gsmr?.currentBts || train.btsId || "BTS-MS01";
+  const rxLev = train.gsmr?.rxLevDbm ?? (train.rxLevDbm || -65);
+
+  const buf = Buffer.alloc(24);
+  buf[0] = 0x12; // Euroradio session
+  buf[1] = 0x03; // Msg 3: Movement Authority
+  buf.writeUInt32BE(ma, 2);
+  buf.writeUInt16BE(vPerm, 6);
+  buf.writeUInt16BE(0x1042, 8);
+  Buffer.from("SIEMENS-ETCS-L2").copy(buf, 10);
+
+  return recordNetworkPacket({
+    protocol: "GSMR_RAIL",
+    payload: buf,
+    srcIp: "10.99.1.5",
+    dstIp: "10.99.2.14",
+    srcPort: 21100,
+    dstPort: 21100,
+    info: `Nokia GSM-R / Siemens ETCS L2 · ${number} (${loco.split(" ")[0]}) · MA: ${ma}m · V_PERM: ${vPerm} km/h`,
+    dissection: {
+      category: 921,
+      catTitle: "Nokia GSM-R / Euroradio ETCS Subset-026",
+      items: [
+        { tag: "MsgType", name: "ETCS Message Type", value: "Msg 3: Movement Authority" },
+        { tag: "Train", name: "Locomotive ID", value: `${number} (${loco})` },
+        { tag: "MA", name: "Movement Authority Distance", value: `${ma} meters ahead` },
+        { tag: "V_PERM", name: "Permitted Speed", value: `${vPerm} km/h` },
+        { tag: "Mode", name: "Supervision Mode", value: mode },
+        { tag: "Balise", name: "Active Eurobalise Group", value: balise },
+        { tag: "BTS", name: "Serving Nokia Base Station", value: `${bts} (${rxLev} dBm)` },
+      ],
+    },
+  });
+}
+

@@ -7,6 +7,8 @@ import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
 import { CyberAuditDashboard } from "../components/CyberAuditDashboard";
 import { NetworkWiresharkInspector } from "../components/NetworkWiresharkInspector";
+import { WaterMonitoringDashboard } from "../components/WaterMonitoringDashboard";
+import { RailFleetDashboard } from "../components/RailFleetDashboard";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -32,7 +34,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber" | "cad" | "network";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber" | "cad" | "network" | "water" | "rail";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -1478,7 +1480,15 @@ export function OpsPage(props: { view: View }) {
         <NetworkWiresharkInspector />
       ) : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" ? null : (
+      {view === "water" ? (
+        <WaterMonitoringDashboard />
+      ) : null}
+
+      {view === "rail" ? (
+        <RailFleetDashboard />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" || view === "water" || view === "rail" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1577,7 +1587,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
-      {view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" ? null : (
+      {view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" || view === "water" || view === "rail" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">

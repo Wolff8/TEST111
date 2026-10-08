@@ -16,6 +16,8 @@ export function App() {
           <Route path="/cyber" element={<OpsPage view="cyber" />} />
           <Route path="/cad" element={<OpsPage view="cad" />} />
           <Route path="/network" element={<OpsPage view="network" />} />
+          <Route path="/water" element={<OpsPage view="water" />} />
+          <Route path="/rail" element={<OpsPage view="rail" />} />
         </Routes>
         <Nav />
       </div>
@@ -28,6 +30,8 @@ function Nav() {
     { to: "/", lab: "OPS", ic: "▣" },
     { to: "/lora", lab: "LoRa", ic: "◈" },
     { to: "/sensors", lab: "Sensors", ic: "◉" },
+    { to: "/water", lab: "Vode / Hydro", ic: "💧" },
+    { to: "/rail", lab: "Rail Cargo", ic: "🚆" },
     { to: "/radar", lab: "Radar", ic: "✈" },
     { to: "/cad", lab: "CAD Radar", ic: "📐" },
     { to: "/data", lab: "Data", ic: "▤" },

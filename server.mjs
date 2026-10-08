@@ -29,10 +29,14 @@ import {
 import { encodeLiveAsterix, encodeEchoesCat048, encodeCat021, encodeCat010, DEFAULT_RADAR, PSR_SITES, isLeftoverPsrSite } from "./asterix-encode.mjs";
 import {
   recordNetworkPacket,
+  recordLoRaPacket,
+  recordGsmrPacket,
   generateFullPcap,
   getCapturedPackets,
   getNetworkInterfaceSummary,
 } from "./pcap-exporter.mjs";
+import { hydroFeed } from "./hydro-feed.mjs";
+import { railFeed } from "./rail-feed.mjs";
 import { fetchEurofplCode } from "./eurofpl-feed.mjs";
 import { applyLiveRoutes, startLiveRoutePump, listLiveRoutes, liveRouteStatus, FPL_ROUTE_API } from "./fpl-feed.mjs";
 import { fetchArrivals, isSiArrival, FIDS_LJU, OPENSKY_ARRIVAL, HUBS } from "./arrivals-feed.mjs";
@@ -4835,6 +4839,29 @@ const httpServer = createServer(async (req, res) => {
       sendJson(req, res, await loadIlluminators(url.searchParams.get("place") || "si"));
       return;
     }
+    if (url.pathname === "/api/hydro/live" || url.pathname === "/api/hydro" || url.pathname === "/api/water") {
+      sendJson(req, res, hydroFeed.getLiveHydro());
+      return;
+    }
+    if (url.pathname === "/api/rail/live" || url.pathname === "/api/rail/dashboard" || url.pathname === "/api/rail" || url.pathname === "/api/rail-cargo") {
+      sendJson(req, res, railFeed.getRailDashboard());
+      return;
+    }
+    if (url.pathname === "/api/rail/trains") {
+      sendJson(req, res, { ok: true, count: railFeed.trains.length, trains: railFeed.trains });
+      return;
+    }
+    if (url.pathname === "/api/rail/tracks") {
+      sendJson(req, res, {
+        ok: true,
+        stations: railFeed.stations,
+        masts: railFeed.masts,
+        crossings: railFeed.crossings,
+        switches: railFeed.switches,
+        geometry: railFeed.trackGeometry,
+      });
+      return;
+    }
     if (url.pathname === "/api/lora") {
       sendJson(req, res, await loadLora(url.searchParams.get("place") || "si"));
       return;
@@ -5145,6 +5172,22 @@ function startWidebandFeed() {
   void pull();
   setInterval(pull, 12_000);
 }
+
+// Background packet recording for Wireshark network inspection (LoRaWAN & Nokia GSM-R)
+setInterval(() => {
+  try {
+    const hydro = hydroFeed.getLiveHydro();
+    if (hydro.lorawanNodes && hydro.lorawanNodes.length > 0) {
+      const node = hydro.lorawanNodes[Math.floor(Math.random() * hydro.lorawanNodes.length)];
+      recordLoRaPacket(node);
+    }
+    const rail = railFeed.getRailDashboard();
+    if (rail.trains && rail.trains.length > 0) {
+      const tr = rail.trains[Math.floor(Math.random() * rail.trains.length)];
+      recordGsmrPacket(tr);
+    }
+  } catch {}
+}, 6000);
 
 async function detectSdrHost() {
   const pubPort = Number(process.env.SDR_PUBLIC_PORT || process.env.SDR_TCP_PORT || 50001);
