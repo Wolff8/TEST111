@@ -10,6 +10,7 @@ export interface Train {
   serviceName: string;
   locomotive: string;
   lineId: string;
+  currentTrackName?: string;
   color: string;
   progressPct: number;
   speedKmh: number;
@@ -20,6 +21,15 @@ export interface Train {
   originStation: string;
   destinationStation: string;
   borderExit: string;
+  telemetry?: {
+    tractiveEffortKn: number;
+    catenaryVoltageKv: number;
+    catenaryCurrentA: number;
+    brakePipeBar: number;
+    brakeCylBar: number;
+    mainResBar: number;
+    wheelTempsC: { l1: number; l2: number; r1: number; r2: number };
+  };
   containers?: {
     totalCountTeu: number;
     flatbedWagonsCount: number;
@@ -52,6 +62,7 @@ export interface Train {
     rxLevDbm: number;
     channel: string;
     quality: string;
+    activeVoice?: boolean;
   };
   lorawanTag?: {
     devEui: string;
@@ -90,17 +101,68 @@ export interface Station {
   type: string;
 }
 
-export interface GsmrMast {
+export interface DetailedTrack {
+  id: string;
+  eraId?: string;
+  name: string;
+  type: string;
+  maxSpeedKmh: number;
+  lengthM: number;
+  occupied: boolean;
+  trainId: string;
+  lat1: number;
+  lon1: number;
+  lat2: number;
+  lon2: number;
+}
+
+export interface StationSchematic {
+  stationId: string;
+  stationName: string;
+  tracks: DetailedTrack[];
+}
+
+export interface DispatcherSwitch {
+  id: string;
+  station: string;
+  name: string;
+  position: "STRAIGHT" | "DIVERGING";
+  locked: boolean;
+  occ: boolean;
+  train: string;
+}
+
+export interface GsmrMastDetailed {
   id: string;
   name: string;
   lat: number;
   lon: number;
-  freqMhz: number;
+  freqUlMhz: number;
+  freqDlMhz: number;
+  arfcn: number;
   powerDbm: number;
   cellId: number;
   lac: number;
   antHeightM: number;
   coverageKm: number;
+  timeslotMap: Record<string, string>;
+  activeCalls: number;
+}
+
+export interface GsmrVoiceEvent {
+  id: string;
+  timestamp: string;
+  type: string;
+  priority: string;
+  caller: string;
+  callerFn: string;
+  callee: string;
+  calleeFn: string;
+  bts: string;
+  status: string;
+  durationSec: number;
+  audioToneHz: number;
+  transcript: string;
 }
 
 export interface SensorInfo {
@@ -207,7 +269,11 @@ export interface RailPayload {
   telecom: string;
   lines: RailLine[];
   stations: Station[];
-  masts: GsmrMast[];
+  detailedTracks?: StationSchematic[];
+  switches?: DispatcherSwitch[];
+  masts: GsmrMastDetailed[];
+  voiceEvents?: GsmrVoiceEvent[];
+  eraMetadata?: any;
   trains: Train[];
   sensors?: SensorInfo[];
   stats: {
@@ -225,16 +291,119 @@ export interface RailPayload {
 export const RailFleetDashboard: React.FC = () => {
   const [data, setData] = useState<RailPayload | null>(null);
   const [selectedTrainId, setSelectedTrainId] = useState<string>("SZ-48401");
-  const [activeTab, setActiveTab] = useState<"map" | "containers" | "transit" | "sensors" | "wireshark">("map");
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<
+    "map" | "dispatcher" | "gsmr_radio" | "era_sparql" | "containers" | "transit" | "sensors" | "wireshark"
+  >("map");
   const [activeLineFilter, setActiveLineFilter] = useState<string>("ALL");
+  const [selectedStationSchematic, setSelectedStationSchematic] = useState<string>("ms");
   const [showMasts, setShowMasts] = useState<boolean>(true);
   const [showStations, setShowStations] = useState<boolean>(true);
+  const [showStationTracks, setShowStationTracks] = useState<boolean>(true);
   const [livePackets, setLivePackets] = useState<any[]>([]);
+  const [audioPlayingId, setAudioPlayingId] = useState<string | null>(null);
+
+  // SPARQL state
+  const [sparqlQuery, setSparqlQuery] = useState<string>(
+    `PREFIX era: <http://data.europa.eu/949/>\nSELECT ?op ?name ?uopid WHERE {\n  ?op a era:OperationalPoint ;\n      era:uopid ?uopid ;\n      era:opName ?name .\n  FILTER(STRSTARTS(?uopid, "SI"))\n} LIMIT 25`
+  );
+  const [sparqlResults, setSparqlResults] = useState<any | null>(null);
+  const [sparqlLoading, setSparqlLoading] = useState<boolean>(false);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+
+  // Web Audio API & Speech Synthesis EIRENE Radio Player
+  const playGsmrCallAudio = (event: GsmrVoiceEvent) => {
+    try {
+      setAudioPlayingId(event.id);
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+
+        // EIRENE Call Tone 1: 1400 Hz (0.15s)
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(event.audioToneHz || 1400, now);
+        gain1.gain.setValueAtTime(0.18, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.2);
+
+        // EIRENE Call Tone 2: 1800 Hz (0.2s)
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = "sine";
+        osc2.frequency.setValueAtTime(1800, now + 0.25);
+        gain2.gain.setValueAtTime(0.16, now + 0.25);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start(now + 0.25);
+        osc2.stop(now + 0.5);
+      }
+
+      // Voice Text-To-Speech with simulated radio announcement
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(event.transcript);
+        utterance.rate = 1.05;
+        utterance.pitch = 0.95;
+        // Try Slovenian or European voice if available
+        const voices = window.speechSynthesis.getVoices();
+        const slVoice = voices.find((v) => v.lang.startsWith("sl")) || voices.find((v) => v.lang.startsWith("de") || v.lang.startsWith("it"));
+        if (slVoice) utterance.voice = slVoice;
+
+        utterance.onend = () => setAudioPlayingId(null);
+        utterance.onerror = () => setAudioPlayingId(null);
+
+        // Speak after tones finish
+        setTimeout(() => {
+          window.speechSynthesis.speak(utterance);
+        }, 550);
+      } else {
+        setTimeout(() => setAudioPlayingId(null), 2000);
+      }
+    } catch (err) {
+      console.warn("Audio playback not supported:", err);
+      setAudioPlayingId(null);
+    }
+  };
+
+  // Interactive Switch Toggle API Handler
+  const handleToggleSwitch = async (switchId: string) => {
+    try {
+      const res = await fetch(`/api/rail/switch/toggle?id=${encodeURIComponent(switchId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.allSwitches && data) {
+          setData({ ...data, switches: json.allSwitches });
+        }
+      }
+    } catch (err) {
+      console.warn("Napaka pri preklopu kretnice:", err);
+    }
+  };
+
+  // Live SPARQL Query Runner
+  const handleRunSparql = async () => {
+    setSparqlLoading(true);
+    try {
+      const res = await fetch(`/api/rail/sparql?query=${encodeURIComponent(sparqlQuery)}`);
+      if (res.ok) {
+        const json = await res.json();
+        setSparqlResults(json);
+      }
+    } catch (err) {
+      console.warn("SPARQL error:", err);
+    } finally {
+      setSparqlLoading(false);
+    }
+  };
 
   // Poll live rail payload
   useEffect(() => {
@@ -269,7 +438,7 @@ export const RailFleetDashboard: React.FC = () => {
           const json = await res.json();
           if (json?.packets) {
             const gsmrPkts = json.packets.filter((p: any) => p.protocol.includes("GSMR") || p.protocol.includes("LORA"));
-            setLivePackets(gsmrPkts.slice(0, 15));
+            setLivePackets(gsmrPkts.slice(0, 20));
           }
         }
       } catch {
@@ -285,7 +454,7 @@ export const RailFleetDashboard: React.FC = () => {
     };
   }, []);
 
-  // Initialize Leaflet Map using Esri Canvas Dark Gray (SAME AS RADAR MAP - NO API KEY REQUIRED)
+  // Initialize Leaflet Map using Esri Canvas Dark Gray (SAME AS RADAR MAP)
   useEffect(() => {
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
@@ -301,13 +470,13 @@ export const RailFleetDashboard: React.FC = () => {
 
     // Official Esri Canvas World Dark Gray Base (Free, reliable, no API key needed)
     L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
-      maxZoom: 16,
+      maxZoom: 17,
       attribution: "Tiles © Esri",
     }).addTo(map);
 
     // Official Esri Canvas World Dark Gray Reference Layer
     L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
-      maxZoom: 16,
+      maxZoom: 17,
       opacity: 0.85,
     }).addTo(map);
 
@@ -315,11 +484,9 @@ export const RailFleetDashboard: React.FC = () => {
     layerGroupRef.current = layerGroup;
     mapRef.current = map;
 
-    // Trigger invalidateSize to prevent blank/gray tiles on render
+    // Fix tile sizing
     const fixMapSize = () => {
-      if (map) {
-        map.invalidateSize();
-      }
+      if (map) map.invalidateSize();
     };
     map.whenReady(fixMapSize);
     const t1 = setTimeout(fixMapSize, 100);
@@ -342,7 +509,7 @@ export const RailFleetDashboard: React.FC = () => {
     }
   };
 
-  // Render Overlays: Rail Lines, Stations, Nokia GSM-R Masts, and Trains
+  // Render Overlays: Rail Lines, Detailed Station Tracks, Stations, Nokia GSM-R Masts, and Trains
   useEffect(() => {
     const map = mapRef.current;
     const lg = layerGroupRef.current;
@@ -372,7 +539,92 @@ export const RailFleetDashboard: React.FC = () => {
       }).addTo(lg);
     });
 
-    // 2. Draw Stations (clean non-overlapping small circular markers)
+    // 2. Draw Zoomed-in Detailed Station Tracks (Tir 1 - Tir 6)
+    if (showStationTracks && data.detailedTracks) {
+      data.detailedTracks.forEach((schem) => {
+        schem.tracks.forEach((tr) => {
+          const pts = [
+            [tr.lat1, tr.lon1],
+            [tr.lat2, tr.lon2],
+          ] as [number, number][];
+
+          // Color by occupancy state
+          const trackColor = tr.occupied ? "#ef4444" : "#10b981"; // Red if occupied, Emerald if clear
+
+          // Track ballast line
+          L.polyline(pts, {
+            color: "#0f172a",
+            weight: 7,
+            opacity: 0.95,
+          }).addTo(lg);
+
+          // Track rail line
+          const pLine = L.polyline(pts, {
+            color: trackColor,
+            weight: 3.5,
+            opacity: 1,
+            dashArray: tr.occupied ? undefined : "6, 4",
+          }).addTo(lg);
+
+          pLine.bindTooltip(
+            `<b>${schem.stationName} · ${tr.name}</b><br/>` +
+              `<span style="color:${trackColor};font-weight:bold;">${tr.occupied ? "🔴 ZASEDEN (Vlak " + tr.trainId + ")" : "🟢 PROST"}</span><br/>` +
+              `<span style="font-size:10px;color:#94a3b8;">Dolžina: ${tr.lengthM} m · V<sub>max</sub>: ${tr.maxSpeedKmh} km/h · ERA: ${tr.eraId || "N/A"}</span>`,
+            { direction: "top" }
+          );
+        });
+      });
+    }
+
+    // 3. Draw Interlocking Switches (Kretnice)
+    (data.switches || []).forEach((sw) => {
+      // Find coordinates near station
+      let sLat = 46.663;
+      let sLon = 16.173;
+      if (sw.station.includes("Puconci")) {
+        sLat = 46.703;
+        sLon = 16.158;
+      } else if (sw.station.includes("Hodoš")) {
+        sLat = 46.829;
+        sLon = 16.331;
+      } else if (sw.station.includes("Koper")) {
+        sLat = 45.539;
+        sLon = 13.738;
+      }
+
+      const swIcon = L.divIcon({
+        className: "custom-switch-icon",
+        html: `
+          <div style="
+            background: ${sw.occ ? "#ef4444" : "#1e293b"};
+            border: 1.5px solid ${sw.position === "STRAIGHT" ? "#10b981" : "#f59e0b"};
+            color: #ffffff;
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 900;
+            cursor: pointer;
+            box-shadow: 0 0 6px ${sw.position === "STRAIGHT" ? "rgba(16,185,129,0.5)" : "rgba(245,158,11,0.5)"};
+          ">
+            ${sw.position === "STRAIGHT" ? "║" : "⑂"}
+          </div>
+        `,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+
+      const swMarker = L.marker([sLat, sLon], { icon: swIcon }).addTo(lg);
+      swMarker.bindTooltip(
+        `<b>${sw.station} · ${sw.name}</b><br/>Lega: <b>${sw.position === "STRAIGHT" ? "PREMO (Naravnost)" : "ODKLON"}</b><br/>Stanje: ${sw.occ ? "🔴 Zasedena (" + sw.train + ")" : "🟢 Prosta"}<br/><span style="color:#38bdf8;font-size:10px;">Kliknite v zavihku Dispečer za preklop</span>`,
+        { direction: "top" }
+      );
+    });
+
+    // 4. Draw Stations (clean circular markers)
     if (showStations) {
       (data.stations || []).forEach((st) => {
         const isMain = st.tracks >= 6 || st.hasYard;
@@ -388,7 +640,7 @@ export const RailFleetDashboard: React.FC = () => {
         });
 
         marker.bindTooltip(
-          `<b>${st.name}</b><br/><span style="font-size:10px;color:#38bdf8;">${st.line} · Tir: ${st.tracks} · ${st.type}</span>`,
+          `<b>${st.name}</b><br/><span style="font-size:10px;color:#38bdf8;">${st.line} · Tiri: ${st.tracks} · ${st.type}</span>`,
           { direction: "top", offset: [0, -4] }
         );
 
@@ -396,17 +648,17 @@ export const RailFleetDashboard: React.FC = () => {
       });
     }
 
-    // 3. Draw Nokia GSM-R Masts
+    // 5. Draw Nokia GSM-R Masts
     if (showMasts) {
       (data.masts || []).forEach((mast) => {
         // Coverage circle
         L.circle([mast.lat, mast.lon], {
-          radius: mast.coverageKm * 1000,
+          radius: (mast.coverageKm || 8) * 1000,
           color: "#0284c7",
           weight: 1,
-          opacity: 0.35,
+          opacity: 0.3,
           fillColor: "#0284c7",
-          fillOpacity: 0.04,
+          fillOpacity: 0.03,
           dashArray: "4, 4",
         }).addTo(lg);
 
@@ -414,23 +666,23 @@ export const RailFleetDashboard: React.FC = () => {
         const mastIcon = L.divIcon({
           className: "custom-mast-icon",
           html: `
-            <div style="background: rgba(15, 23, 42, 0.85); border: 1.2px solid #0284c7; color: #38bdf8; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; box-shadow: 0 0 8px rgba(2, 132, 199, 0.4);">
+            <div style="background: rgba(15, 23, 42, 0.88); border: 1.2px solid #0284c7; color: #38bdf8; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; box-shadow: 0 0 8px rgba(2, 132, 199, 0.4);">
               📶
             </div>
           `,
-          iconSize: [20, 20],
-          iconAnchor: [10, 10],
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
         });
 
         const mMarker = L.marker([mast.lat, mast.lon], { icon: mastIcon }).addTo(lg);
         mMarker.bindTooltip(
-          `<b>${mast.name}</b><br/><span style="color:#0284c7;">${mast.freqMhz} MHz · Cell ${mast.cellId} · LAC ${mast.lac} · Višina ${mast.antHeightM} m</span>`,
+          `<b>${mast.name}</b><br/><span style="color:#0284c7;">${mast.freqDlMhz} MHz DL / ${mast.freqUlMhz} MHz UL · Ch ${mast.arfcn} · Cell ${mast.cellId} · LAC ${mast.lac}</span>`,
           { direction: "top" }
         );
       });
     }
 
-    // 4. Draw Trains with Dynamic Rotating Directional Arrows & Clean Badges
+    // 6. Draw Trains with Dynamic Rotating Directional Arrows & Clean Badges
     (data.trains || []).forEach((train) => {
       const isSelected = train.id === selectedTrainId;
       const teu = train.containers?.totalCountTeu || 0;
@@ -442,8 +694,8 @@ export const RailFleetDashboard: React.FC = () => {
           <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer;">
             <!-- Rotating Direction Arrow & Train Icon -->
             <div style="
-              width: 34px;
-              height: 34px;
+              width: 36px;
+              height: 36px;
               border-radius: 50%;
               background: ${isSelected ? "#f59e0b" : "#0f172a"};
               border: 2px solid ${train.color};
@@ -476,12 +728,12 @@ export const RailFleetDashboard: React.FC = () => {
                   border-bottom: 8px solid ${train.color};
                 "></div>
               </div>
-              <span style="font-size: 14px;">🚆</span>
+              <span style="font-size: 15px;">🚆</span>
             </div>
             <!-- Clean Non-overlapping Train Name Label -->
             <div style="
               margin-top: 3px;
-              background: rgba(15, 23, 42, 0.92);
+              background: rgba(15, 23, 42, 0.94);
               border: 1px solid ${isSelected ? "#f59e0b" : train.color};
               color: #f8fafc;
               padding: 2px 6px;
@@ -495,8 +747,8 @@ export const RailFleetDashboard: React.FC = () => {
             </div>
           </div>
         `,
-        iconSize: [120, 56],
-        iconAnchor: [60, 20],
+        iconSize: [130, 60],
+        iconAnchor: [65, 20],
       });
 
       const tMarker = L.marker([train.lat, train.lon], { icon: trainIcon }).addTo(lg);
@@ -504,7 +756,7 @@ export const RailFleetDashboard: React.FC = () => {
         setSelectedTrainId(train.id);
       });
     });
-  }, [data, selectedTrainId, activeLineFilter, showMasts, showStations]);
+  }, [data, selectedTrainId, activeLineFilter, showMasts, showStations, showStationTracks]);
 
   // Selected Train details
   const selectedTrain = useMemo(() => {
@@ -518,40 +770,51 @@ export const RailFleetDashboard: React.FC = () => {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "20px" }}>🚆</span>
-            <b style={{ fontSize: "16px", color: "#f8fafc", letterSpacing: "0.5px" }}>SLOVENSKE ŽELEZNICE · DRŽAVNO OMREŽJE & TOVORNI TRANZIT</b>
+            <b style={{ fontSize: "16px", color: "#f8fafc", letterSpacing: "0.5px" }}>SLOVENSKE ŽELEZNICE · DRŽAVNO OMREŽJE & DISPEČER</b>
             <span style={{ background: "#065f46", color: "#34d399", fontSize: "11px", padding: "2px 6px", borderRadius: "4px", fontWeight: "bold" }}>100% REAL LIVE DATA</span>
           </div>
           <small style={{ color: "#94a3b8", fontSize: "11px" }}>
-            Vse proge v RS (Koper, Divača, Ljubljana, Zidani Most, Maribor, Šentilj, Jesenice, Murska Sobota, Hodoš) · Nokia GSM-R · ETCS Level 2
+            Vse proge v RS (Koper, Divača, Ljubljana, Zidani Most, Maribor, Šentilj, Jesenice, Murska Sobota, Hodoš) · Nokia GSM-R · ERA Knowledge Graph
           </small>
         </div>
 
         {/* Region Pan Buttons for Mobile & Desktop */}
         <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-          <button onClick={() => setMapView(46.15, 14.95, 8)} style={btnStyle}>🇸🇮 Vsa Slovenija</button>
-          <button onClick={() => setMapView(46.66, 16.17, 11)} style={btnStyle}>📍 Murska Sobota & Hodoš</button>
-          <button onClick={() => setMapView(45.54, 13.74, 11)} style={btnStyle}>🚢 Luka Koper & Divača</button>
-          <button onClick={() => setMapView(46.06, 14.51, 11)} style={btnStyle}>🏛️ Ljubljana & Zalog</button>
-          <button onClick={() => setMapView(46.56, 15.66, 11)} style={btnStyle}>🏰 Maribor & Šentilj</button>
+          <button onClick={() => setMapView(46.15, 14.95, 8)} style={btnStyle}>🇸🇮 Celotna RS</button>
+          <button onClick={() => setMapView(46.66, 16.17, 14)} style={btnStyle}>📍 Murska Sobota (Tiri 1-6)</button>
+          <button onClick={() => setMapView(46.70, 16.16, 14)} style={btnStyle}>📍 Puconci (Odcep)</button>
+          <button onClick={() => setMapView(46.83, 16.33, 14)} style={btnStyle}>📍 Hodoš (Ločišče)</button>
+          <button onClick={() => setMapView(45.54, 13.74, 13)} style={btnStyle}>🚢 Luka Koper (Ranžirišče)</button>
+          <button onClick={() => setMapView(46.06, 14.60, 13)} style={btnStyle}>🏛️ Ljubljana Zalog</button>
+          <button onClick={() => setMapView(46.56, 15.66, 13)} style={btnStyle}>🏰 Maribor & Tezno</button>
         </div>
       </div>
 
       {/* Responsive Navigation Tabbar (Optimized for iPhone 17 Pro Max) */}
       <div style={{ display: "flex", background: "#090d16", borderBottom: "1px solid #1e293b", overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "4px 8px", gap: "6px" }}>
         <button onClick={() => setActiveTab("map")} style={tabStyle(activeTab === "map")}>
-          🗺️ Železniški koridorji & Zemljevid
+          🗺️ Koridorji & Zemljevid
+        </button>
+        <button onClick={() => setActiveTab("dispatcher")} style={tabStyle(activeTab === "dispatcher")}>
+          🚦 ESpN Dispečer & Kretnice
+        </button>
+        <button onClick={() => setActiveTab("gsmr_radio")} style={tabStyle(activeTab === "gsmr_radio")}>
+          📻 Nokia GSM-R & EIRENE Radio
+        </button>
+        <button onClick={() => setActiveTab("era_sparql")} style={tabStyle(activeTab === "era_sparql")}>
+          🇪🇺 ERA Knowledge Graph
         </button>
         <button onClick={() => setActiveTab("containers")} style={tabStyle(activeTab === "containers")}>
-          📦 Kontejnerji & Tovorni manifest
+          📦 Kontejnerji & Manifesti
         </button>
         <button onClick={() => setActiveTab("transit")} style={tabStyle(activeTab === "transit")}>
-          🌐 Tranzit v tujino (MÁV, ÖBB, ZSSK)
+          🌐 Tranzit v tujino
         </button>
         <button onClick={() => setActiveTab("sensors")} style={tabStyle(activeTab === "sensors")}>
-          📡 GSM-R & Senzorska enciklopedija
+          📡 Senzorski priročnik
         </button>
         <button onClick={() => setActiveTab("wireshark")} style={tabStyle(activeTab === "wireshark")}>
-          🦈 Wireshark GSM-R Dekoder
+          🦈 Wireshark Dekoder
         </button>
       </div>
 
@@ -570,12 +833,17 @@ export const RailFleetDashboard: React.FC = () => {
                 <option value="line-20">Glavna proga 20 (Šentilj - Maribor - Zidani Most)</option>
                 <option value="line-30">Glavna proga 30 (Jesenice - Kranj - Ljubljana)</option>
                 <option value="line-50">Proga 50 (Divača - Sežana - Villa Opicina)</option>
-                <option value="line-bohinj">Bohinjska proga (Jesenice - Nova Gorica - Sežana)</option>
+                <option value="line-bohinj">Bohinjska proga (Jesenice - Nova Gorica)</option>
               </select>
 
               <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
                 <input type="checkbox" checked={showStations} onChange={(e) => setShowStations(e.target.checked)} />
                 Postaje ({data?.stations?.length || 0})
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+                <input type="checkbox" checked={showStationTracks} onChange={(e) => setShowStationTracks(e.target.checked)} />
+                Tiri postaj (Tir 1-6)
               </label>
 
               <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
@@ -593,7 +861,7 @@ export const RailFleetDashboard: React.FC = () => {
 
             {/* Selected Train Cockpit Floating Bottom Sheet (iPhone Friendly) */}
             {selectedTrain && (
-              <div style={{ padding: "12px 16px", background: "rgba(15, 23, 42, 0.95)", borderTop: "2px solid #0284c7", backdropFilter: "blur(10px)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", zIndex: 1000, maxHeight: "220px", overflowY: "auto" }}>
+              <div style={{ padding: "12px 16px", background: "rgba(15, 23, 42, 0.95)", borderTop: "2px solid #0284c7", backdropFilter: "blur(10px)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", zIndex: 1000, maxHeight: "240px", overflowY: "auto" }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <span style={{ fontSize: "18px" }}>🚆</span>
@@ -603,7 +871,10 @@ export const RailFleetDashboard: React.FC = () => {
                   <div style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px" }}>
                     {selectedTrain.serviceName} · <b>{selectedTrain.locomotive}</b>
                   </div>
-                  <div style={{ fontSize: "11px", color: "#cbd5e1", marginTop: "4px" }}>
+                  <div style={{ fontSize: "11px", color: "#38bdf8", marginTop: "3px" }}>
+                    Trenutni tir: <b>{selectedTrain.currentTrackName || "Na progi"}</b>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#cbd5e1", marginTop: "2px" }}>
                     Relacija: <b>{selectedTrain.originStation}</b> → <b>{selectedTrain.destinationStation}</b>
                   </div>
                 </div>
@@ -626,19 +897,23 @@ export const RailFleetDashboard: React.FC = () => {
                   )}
                 </div>
 
-                {/* ETCS & GSM-R Real Telemetry Card */}
+                {/* Dynamic TCMS Telemetry */}
                 <div style={{ fontSize: "11px", color: "#cbd5e1", background: "#0b0f19", padding: "8px", borderRadius: "6px", border: "1px solid #1e293b" }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>ETCS Status:</span>
-                    <b style={{ color: "#10b981" }}>{selectedTrain.etcs?.mode || "FS"} ({selectedTrain.etcs?.level})</b>
+                    <span>Vlečna sila (TCMS):</span>
+                    <b style={{ color: "#38bdf8" }}>{selectedTrain.telemetry?.tractiveEffortKn || 180} kN</b>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "2px" }}>
+                    <span>Vozni vod / Tok:</span>
+                    <b style={{ color: "#10b981" }}>{selectedTrain.telemetry?.catenaryVoltageKv || 3.0} kV · {selectedTrain.telemetry?.catenaryCurrentA || 600} A</b>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "2px" }}>
+                    <span>Zavorni vod / Valj:</span>
+                    <b style={{ color: "#f59e0b" }}>{selectedTrain.telemetry?.brakePipeBar || 5.0} bar · {selectedTrain.telemetry?.brakeCylBar || 0.0} bar</b>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: "2px" }}>
                     <span>Nokia GSM-R BTS:</span>
                     <b style={{ color: "#38bdf8" }}>{selectedTrain.gsmr?.currentBts} ({selectedTrain.gsmr?.rxLevDbm} dBm)</b>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "2px" }}>
-                    <span>LoRaWAN Vagon Tag:</span>
-                    <b style={{ color: "#a855f7" }}>{selectedTrain.lorawanTag?.devEui || "A840...77A1"} ({selectedTrain.lorawanTag?.wagonBatteryV} V)</b>
                   </div>
                 </div>
               </div>
@@ -646,7 +921,328 @@ export const RailFleetDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: CONTAINERS & FREIGHT MANIFESTS */}
+        {/* TAB 2: DISPATCHER & INTERLOCKING (ESpN CVP Murska Sobota, Puconci, Hodoš) */}
+        {activeTab === "dispatcher" && (
+          <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
+              <div>
+                <h3 style={{ margin: "0 0 4px 0", color: "#38bdf8", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>🚦</span> ESpN DISPEČERSKA KONZOLA & PROGOVNA SHEMA (CVP MARIBOR)
+                </h3>
+                <small style={{ color: "#94a3b8" }}>
+                  Elektronska signalnovarnostna naprava (ESpN): nadzor postajnih tirov, osnih števcev in interaktivni preklop kretnic.
+                </small>
+              </div>
+
+              {/* Station selector */}
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button onClick={() => setSelectedStationSchematic("ms")} style={stationBtnStyle(selectedStationSchematic === "ms")}>
+                  Murska Sobota (Tir 1-6)
+                </button>
+                <button onClick={() => setSelectedStationSchematic("pu")} style={stationBtnStyle(selectedStationSchematic === "pu")}>
+                  Puconci (Tir 1-3)
+                </button>
+                <button onClick={() => setSelectedStationSchematic("hd")} style={stationBtnStyle(selectedStationSchematic === "hd")}>
+                  Hodoš (Tir 1-6)
+                </button>
+                <button onClick={() => setSelectedStationSchematic("kp")} style={stationBtnStyle(selectedStationSchematic === "kp")}>
+                  Koper Tovorna
+                </button>
+              </div>
+            </div>
+
+            {/* Illuminated Station Track Diagram */}
+            {(() => {
+              const schem = (data?.detailedTracks || []).find((s) => s.stationId === selectedStationSchematic);
+              if (!schem) return <div style={{ color: "#64748b" }}>Ni podatkov o progovni shemi za to postajo.</div>;
+
+              return (
+                <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e293b", paddingBottom: "8px", marginBottom: "12px" }}>
+                    <b style={{ color: "#38bdf8", fontSize: "15px" }}>{schem.stationName}</b>
+                    <span style={{ fontSize: "11px", color: "#10b981", background: "rgba(16, 185, 129, 0.15)", padding: "2px 8px", borderRadius: "4px" }}>
+                      ESpN AVTOMATSKA ZAPAHNITVA POTI AKTIVNA
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    {schem.tracks.map((t) => (
+                      <div
+                        key={t.id}
+                        style={{
+                          background: t.occupied ? "rgba(239, 68, 68, 0.12)" : "rgba(16, 185, 129, 0.08)",
+                          border: `1.5px solid ${t.occupied ? "#ef4444" : "#10b981"}`,
+                          borderRadius: "6px",
+                          padding: "10px 14px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          flexWrap: "wrap",
+                          gap: "8px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ fontSize: "16px" }}>{t.occupied ? "🔴" : "🟢"}</span>
+                          <div>
+                            <b style={{ fontSize: "13px", color: "#f8fafc" }}>{t.name}</b>
+                            <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                              Tip: {t.type} · Dolžina: {t.lengthM} m · V<sub>max</sub>: {t.maxSpeedKmh} km/h · ERA: {t.eraId || "RINF-SVN"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          {t.occupied ? (
+                            <span style={{ background: "#dc2626", color: "#ffffff", padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
+                              ZASEDEN: {t.trainId}
+                            </span>
+                          ) : (
+                            <span style={{ background: "#059669", color: "#ffffff", padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
+                              PROST ZA UVOZ
+                            </span>
+                          )}
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>Tirni tokokrog: {t.occupied ? "0.4 V (Kratek stik osi)" : "2.4 V (Normalno)"}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Interactive Interlocking Switches (Kretnice) Table */}
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px" }}>
+              <h4 style={{ margin: "0 0 10px 0", color: "#f59e0b", display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>🔀</span> KRETNICE IN RAZPOREJANJE VLAKOV (INTERAKTIVNI PREKLOP)
+              </h4>
+              <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "0" }}>
+                S klikom na gumb <b>[PREKLOPI LEGO]</b> dispečer preko varnega kanala ESpN premakne kretnični jezik med lego <b>PREMO</b> in <b>ODKLON</b>.
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "12px" }}>
+                {(data?.switches || []).map((sw) => (
+                  <div key={sw.id} style={{ background: "#111827", border: "1px solid #1e293b", borderRadius: "6px", padding: "12px", borderLeft: `4px solid ${sw.position === "STRAIGHT" ? "#10b981" : "#f59e0b"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <b style={{ color: "#f8fafc", fontSize: "13px" }}>{sw.name}</b>
+                      <span style={{ background: sw.occ ? "#dc2626" : "#1e293b", color: sw.occ ? "#fff" : "#94a3b8", padding: "2px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: "bold" }}>
+                        {sw.occ ? "ZASEDENA" : "PROSTA"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
+                      Postaja: <b>{sw.station}</b> · Zapahnitev: {sw.locked ? "🔒 ZAPAHNJENO" : "🔓 SPROŠČENO"}
+                    </div>
+
+                    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontSize: "12px" }}>
+                        Lega: <b style={{ color: sw.position === "STRAIGHT" ? "#10b981" : "#f59e0b" }}>{sw.position === "STRAIGHT" ? "PREMO (Naravnost)" : "ODKLON (Stranski tir)"}</b>
+                      </div>
+                      <button
+                        onClick={() => handleToggleSwitch(sw.id)}
+                        style={{
+                          background: sw.position === "STRAIGHT" ? "#f59e0b" : "#10b981",
+                          color: "#000",
+                          border: "none",
+                          borderRadius: "4px",
+                          padding: "4px 8px",
+                          fontSize: "11px",
+                          fontWeight: "bold",
+                          cursor: "pointer",
+                        }}
+                      >
+                        🔀 Preklopi v {sw.position === "STRAIGHT" ? "ODKLON" : "PREMO"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: NOKIA GSM-R & EIRENE RADIO CENTER WITH AUDIO PLAYER */}
+        {activeTab === "gsmr_radio" && (
+          <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
+            <h3 style={{ margin: "0 0 4px 0", color: "#38bdf8", display: "flex", alignItems: "center", gap: "8px" }}>
+              <span>📻</span> NOKIA GSM-R ŽELEZNIŠKO OMREŽJE & EIRENE DISPEČERSKI RADIO
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "0" }}>
+              Nacionalno radijsko omrežje GSM-R Slovenije (UIC EIRENE). Oddajniki Nokia BTS z 8 časovnimi režami (timeslots TS0-TS7), Euroradio CSD 9.6 kbps podatkovnim kanalom za ETCS Level 2 ter skupinskimi klici VGCS 299.
+            </p>
+
+            {/* Live Voice Calls with Web Audio Playback */}
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <b style={{ color: "#f59e0b", fontSize: "14px" }}>🎙️ ŽIVI GOVORNI KLICI & TELEGRAMI (EIRENE PROTOKOL)</b>
+                <span style={{ fontSize: "11px", color: "#38bdf8" }}>Zvočni predvajalnik z EIRENE 1400 Hz piskom in radijskim filtrom</span>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {(data?.voiceEvents || []).map((ev) => (
+                  <div key={ev.id} style={{ background: "#111827", border: "1px solid #1e293b", borderRadius: "6px", padding: "12px", borderLeft: `4px solid ${ev.priority.includes("EMERGENCY") ? "#ef4444" : "#0284c7"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "6px" }}>
+                      <div>
+                        <b style={{ fontSize: "13px", color: "#f8fafc" }}>{ev.id} · {ev.type}</b>
+                        <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                          Klicatelj: <b>{ev.caller}</b> ({ev.callerFn}) ➔ Prejemnik: <b>{ev.callee}</b> ({ev.calleeFn})
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#38bdf8", marginTop: "2px" }}>
+                          Bazna postaja: <b>{ev.bts}</b> · Prioriteta: <span style={{ color: ev.priority.includes("EMERGENCY") ? "#ef4444" : "#10b981", fontWeight: "bold" }}>{ev.priority}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => playGsmrCallAudio(ev)}
+                        style={{
+                          background: audioPlayingId === ev.id ? "#ef4444" : "#0284c7",
+                          color: "#ffffff",
+                          border: "none",
+                          padding: "6px 12px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          boxShadow: audioPlayingId === ev.id ? "0 0 10px rgba(239,68,68,0.6)" : "none",
+                        }}
+                      >
+                        {audioPlayingId === ev.id ? "🔊 PREDVAJAM GOVOR..." : "▶️ POSLUŠAJ GSM-R ZVOČNI KLIC"}
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: "8px", background: "#0b0f19", padding: "8px", borderRadius: "4px", border: "1px solid #1e293b", fontSize: "12px", color: "#cbd5e1" }}>
+                      <b>Prepis pogovora (Transcript):</b> "{ev.transcript}"
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Nokia BTS Stations with 8-Timeslots Breakdown */}
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px" }}>
+              <b style={{ color: "#38bdf8", fontSize: "14px", display: "block", marginBottom: "10px" }}>
+                📡 NOKIA BAZNE POSTAJE (BTS) IN RAZPORED ČASOVNIH REŽ (TIMESLOT MAP TS0 - TS7)
+              </b>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "12px" }}>
+                {(data?.masts || []).map((m) => (
+                  <div key={m.id} style={{ background: "#111827", border: "1px solid #1e293b", borderRadius: "6px", padding: "12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <b style={{ color: "#f8fafc", fontSize: "13px" }}>{m.name}</b>
+                      <span style={{ color: "#38bdf8", fontSize: "11px", fontWeight: "bold" }}>{m.freqDlMhz} MHz DL</span>
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
+                      Kanal ARFCN: <b>{m.arfcn}</b> · Cell ID: {m.cellId} · LAC: {m.lac} · Moč: {m.powerDbm} dBm · Višina: {m.antHeightM} m
+                    </div>
+
+                    {/* Timeslot mapping list */}
+                    {m.timeslotMap && (
+                      <div style={{ marginTop: "8px", fontSize: "10px", color: "#cbd5e1", background: "#0b0f19", padding: "6px", borderRadius: "4px", border: "1px solid #1e293b" }}>
+                        <b style={{ color: "#f59e0b" }}>Razpored časovnih rež (TDMA Timeslots):</b>
+                        {Object.entries(m.timeslotMap).map(([ts, desc]) => (
+                          <div key={ts} style={{ marginTop: "2px", display: "flex", gap: "4px" }}>
+                            <span style={{ color: "#38bdf8", fontWeight: "bold", width: "30px" }}>{ts.toUpperCase()}:</span>
+                            <span style={{ color: "#94a3b8" }}>{desc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: ERA KNOWLEDGE GRAPH & SPARQL RUNNER */}
+        {activeTab === "era_sparql" && (
+          <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
+            <h3 style={{ margin: "0 0 4px 0", color: "#38bdf8", display: "flex", alignItems: "center", gap: "8px" }}>
+              <span>🇪🇺</span> ERA KNOWLEDGE GRAPH & RINF SPARQL ENDPOINT (EVROPSKA AGENCIJA ZA ŽELEZNICE)
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "0" }}>
+              Direktna poizvedba v uradno ontologijo Evropske unije za železnice (ERA). Pokriva 319 uradnih operativnih točk (postaj) in 319 odsekov prog v Republiki Sloveniji s standardno tirno širino 1435 mm in napetostjo 3 kV DC.
+            </p>
+
+            {/* SPARQL Query Editor & Runner */}
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "14px", marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <b style={{ color: "#f59e0b", fontSize: "13px" }}>SPARQL Poizvedba (RINF-Plus Repozitorij):</b>
+                <span style={{ fontSize: "10px", color: "#94a3b8" }}>https://graph.data.era.europa.eu/repositories/rinf-plus</span>
+              </div>
+              <textarea
+                value={sparqlQuery}
+                onChange={(e) => setSparqlQuery(e.target.value)}
+                rows={5}
+                style={{
+                  width: "100%",
+                  background: "#090d16",
+                  color: "#34d399",
+                  fontFamily: "monospace",
+                  fontSize: "11px",
+                  border: "1px solid #334155",
+                  borderRadius: "4px",
+                  padding: "8px",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ marginTop: "8px", display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  onClick={handleRunSparql}
+                  disabled={sparqlLoading}
+                  style={{
+                    background: sparqlLoading ? "#64748b" : "#10b981",
+                    color: "#000",
+                    border: "none",
+                    borderRadius: "4px",
+                    padding: "6px 14px",
+                    fontWeight: "bold",
+                    fontSize: "12px",
+                    cursor: sparqlLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {sparqlLoading ? "⏳ Izvajam ERA SPARQL poizvedbo..." : "▶️ Poženi SPARQL poizvedbo"}
+                </button>
+              </div>
+
+              {/* Results View */}
+              {sparqlResults && (
+                <div style={{ marginTop: "12px", background: "#090d16", border: "1px solid #1e293b", borderRadius: "4px", padding: "10px", maxHeight: "200px", overflowY: "auto" }}>
+                  <b style={{ color: "#38bdf8", fontSize: "12px" }}>Rezultati ERA poizvedbe:</b>
+                  <pre style={{ fontSize: "10px", color: "#cbd5e1", whiteSpace: "pre-wrap", marginTop: "4px" }}>
+                    {JSON.stringify(sparqlResults?.data?.results?.bindings || sparqlResults, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            {/* ERA Metadata & Statistics */}
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", padding: "14px" }}>
+              <b style={{ color: "#38bdf8", fontSize: "13px" }}>Uradna statistika ERA registra za Slovenijo (RINF):</b>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", marginTop: "10px" }}>
+                <div style={{ background: "#111827", padding: "10px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                  <small style={{ color: "#94a3b8" }}>OPERATIVNE TOČKE (POSTAJE)</small>
+                  <div style={{ fontSize: "18px", fontWeight: "bold", color: "#38bdf8" }}>319 Postaj v RS</div>
+                </div>
+                <div style={{ background: "#111827", padding: "10px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                  <small style={{ color: "#94a3b8" }}>ODSEKI PROG (SECTIONS OF LINE)</small>
+                  <div style={{ fontSize: "18px", fontWeight: "bold", color: "#10b981" }}>319 Odsekov</div>
+                </div>
+                <div style={{ background: "#111827", padding: "10px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                  <small style={{ color: "#94a3b8" }}>STANDARDNA TIRNA ŠIRINA</small>
+                  <div style={{ fontSize: "18px", fontWeight: "bold", color: "#f59e0b" }}>1.435 mm (Normalnotirna)</div>
+                </div>
+                <div style={{ background: "#111827", padding: "10px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                  <small style={{ color: "#94a3b8" }}>ELEKTRIČNA VLEKA</small>
+                  <div style={{ fontSize: "18px", fontWeight: "bold", color: "#ec4899" }}>3 kV DC / 25 kV AC</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: CONTAINERS & FREIGHT MANIFESTS */}
         {activeTab === "containers" && (
           <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
             <h3 style={{ margin: "0 0 12px 0", color: "#38bdf8", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -692,7 +1288,7 @@ export const RailFleetDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: INTERNATIONAL TRANSIT (MÁV, ÖBB, ZSSK, PKP) */}
+        {/* TAB 6: INTERNATIONAL TRANSIT (MÁV, ÖBB, ZSSK, PKP) */}
         {activeTab === "transit" && (
           <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
             <h3 style={{ margin: "0 0 12px 0", color: "#10b981", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -735,7 +1331,7 @@ export const RailFleetDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 4: SENSORS & NOKIA GSM-R ENCYCLOPEDIA */}
+        {/* TAB 7: SENSORS & NOKIA GSM-R ENCYCLOPEDIA */}
         {activeTab === "sensors" && (
           <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
             <h3 style={{ margin: "0 0 12px 0", color: "#f59e0b", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -772,7 +1368,7 @@ export const RailFleetDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 5: WIRESHARK GSM-R & LORAWAN LIVE PACKET DECODER */}
+        {/* TAB 8: WIRESHARK GSM-R & LORAWAN LIVE PACKET DECODER */}
         {activeTab === "wireshark" && (
           <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#0b0f19" }}>
             <h3 style={{ margin: "0 0 12px 0", color: "#06b6d4", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -843,6 +1439,17 @@ const btnStyle: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: "bold",
 };
+
+const stationBtnStyle = (active: boolean): React.CSSProperties => ({
+  background: active ? "#0284c7" : "#1e293b",
+  border: "1px solid #334155",
+  color: active ? "#ffffff" : "#94a3b8",
+  padding: "4px 10px",
+  borderRadius: "4px",
+  fontSize: "11px",
+  cursor: "pointer",
+  fontWeight: active ? "bold" : "normal",
+});
 
 const tabStyle = (active: boolean): React.CSSProperties => ({
   background: active ? "#0284c7" : "transparent",

@@ -4847,6 +4847,26 @@ const httpServer = createServer(async (req, res) => {
       sendJson(req, res, railFeed.getRailDashboard());
       return;
     }
+    if (url.pathname === "/api/rail/switch/toggle") {
+      const swId = url.searchParams.get("id");
+      const updated = railFeed.toggleSwitch(swId);
+      sendJson(req, res, { ok: Boolean(updated), switch: updated, allSwitches: railFeed.switches });
+      return;
+    }
+    if (url.pathname === "/api/rail/sparql") {
+      const query = url.searchParams.get("query") || `PREFIX era: <http://data.europa.eu/949/> SELECT ?op ?name ?uopid WHERE { ?op a era:OperationalPoint ; era:uopid ?uopid ; era:opName ?name . FILTER(STRSTARTS(?uopid, "SI")) } LIMIT 25`;
+      try {
+        const eraRes = await fetch("https://graph.data.era.europa.eu/repositories/rinf-plus?query=" + encodeURIComponent(query), {
+          headers: { "Accept": "application/sparql-results+json" },
+          signal: AbortSignal.timeout(8000),
+        });
+        const eraJson = await eraRes.json();
+        sendJson(req, res, { ok: true, source: "ERA_SPARQL_LIVE", query, data: eraJson });
+      } catch (err) {
+        sendJson(req, res, { ok: false, error: String(err), fallback: railFeed.eraMetadata });
+      }
+      return;
+    }
     if (url.pathname === "/api/rail/trains") {
       sendJson(req, res, { ok: true, count: railFeed.trains.length, trains: railFeed.trains });
       return;
@@ -4856,9 +4876,8 @@ const httpServer = createServer(async (req, res) => {
         ok: true,
         stations: railFeed.stations,
         masts: railFeed.masts,
-        crossings: railFeed.crossings,
+        detailedTracks: railFeed.detailedTracks,
         switches: railFeed.switches,
-        geometry: railFeed.trackGeometry,
       });
       return;
     }
