@@ -74,6 +74,13 @@ import {
   EUROPEAN_AIRBAND_AUDIO_STREAMS,
 } from "./spotting-feed.mjs";
 import {
+  auditDnsSecurity,
+  queryCertificateTransparency,
+  auditHttpHeaders,
+  scanSecretsWithRedaction,
+  generateSparkCyberJob,
+} from "./cyber-tools-feed.mjs";
+import {
   ACI_BB_LAYOUT,
   ACI_SITE,
   AEROPUS_KENDO,
@@ -3984,6 +3991,42 @@ const httpServer = createServer(async (req, res) => {
     }
     if (url.pathname === "/api/spotting/audio" || url.pathname === "/api/atc/live-audio") {
       sendJson(req, res, { ok: true, streams: EUROPEAN_AIRBAND_AUDIO_STREAMS });
+      return;
+    }
+    if (url.pathname === "/api/cyber/dns") {
+      const domain = url.searchParams.get("domain") || "fraport-slovenija.si";
+      const data = await auditDnsSecurity(domain);
+      sendJson(req, res, data);
+      return;
+    }
+    if (url.pathname === "/api/cyber/crtsh") {
+      const domain = url.searchParams.get("domain") || "sloveniacontrol.si";
+      const data = await queryCertificateTransparency(domain);
+      sendJson(req, res, data);
+      return;
+    }
+    if (url.pathname === "/api/cyber/headers") {
+      const target = url.searchParams.get("url") || "https://www.sloveniacontrol.si";
+      const data = await auditHttpHeaders(target);
+      sendJson(req, res, data);
+      return;
+    }
+    if (url.pathname === "/api/cyber/secrets") {
+      let bodyText = "";
+      if (req.method === "POST") {
+        bodyText = (await readBody(req, 100_000)) || "";
+      } else {
+        bodyText = url.searchParams.get("text") || "";
+      }
+      const data = scanSecretsWithRedaction(bodyText);
+      sendJson(req, res, data);
+      return;
+    }
+    if (url.pathname === "/api/cyber/spark") {
+      const inputPath = url.searchParams.get("input") || "gs://radar-telemetry-lake/adsb-raw/*.json";
+      const bqTable = url.searchParams.get("output") || "ops_project.aviation_security.anomalies";
+      const script = generateSparkCyberJob({ inputPath, bqTable });
+      sendJson(req, res, { ok: true, script, runtime: "Dataproc Serverless / PySpark 3.4" });
       return;
     }
     if (url.pathname === "/api/eurofpl" || url.pathname === "/api/fpl" || url.pathname === "/api/fpl-live" || url.pathname === "/api/routes") {

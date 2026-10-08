@@ -5,6 +5,7 @@ import type { Gtw, Plane, Sat, Sensor } from "../lib";
 import { SI_OUTLINE, identLabel, altColor } from "../lib";
 import { createTrailCanvas, type TrailJob } from "../trail-canvas";
 import type { TrailPt } from "../trail-draw";
+import { CockpitHudOverlay } from "./CockpitHudOverlay";
 
 function esc(c: string) {
   return String(c || "#6aa8ff").replace(/[^#a-fA-F0-9]/g, "");
@@ -366,6 +367,15 @@ export function LiveBoardMap(props: {
   const [showWeatherStations, setShowWeatherStations] = useState(true);
   const [activeStationId, setActiveStationId] = useState<RadarStationId>("puconci");
 
+  // Redesigned NOTAM & Airspace Filter States
+  const [notamFilterCategory, setNotamFilterCategory] = useState<"all" | "mil" | "ad" | "nav" | "obst">("all");
+  const [notamOpacity, setNotamOpacity] = useState<number>(0.025);
+  const [notamSearch, setNotamSearch] = useState<string>("");
+  const [showNotamDrawer, setShowNotamDrawer] = useState<boolean>(false);
+
+  // Cockpit HUD / PFD State
+  const [hudPlane, setHudPlane] = useState<Plane | null>(null);
+
   const radarLayerRef = useRef<L.FeatureGroup | null>(null);
   const dronetagLayerRef = useRef<L.FeatureGroup | null>(null);
   const notamLayerRef = useRef<L.FeatureGroup | null>(null);
@@ -659,10 +669,35 @@ export function LiveBoardMap(props: {
     const g = L.featureGroup().addTo(map);
     notamLayerRef.current = g;
 
+    // Filter NOTAMs by category and keyword search
+    const filteredNotams = props.notams.filter((n) => {
+      if (notamSearch) {
+        const q = notamSearch.toLowerCase();
+        const matches =
+          (n.location || "").toLowerCase().includes(q) ||
+          (n.number || "").toLowerCase().includes(q) ||
+          (n.text || "").toLowerCase().includes(q);
+        if (!matches) return false;
+      }
+      if (notamFilterCategory === "mil") {
+        return Boolean(n.isMilitary || n.series === "B" || /mil|danger|prohibit|restricted|tsa|tra/i.test(n.text || ""));
+      }
+      if (notamFilterCategory === "ad") {
+        return Boolean(n.type === "AD" || /aerodrome|rwy|runway|taxiway|apron|twr/i.test(n.text || ""));
+      }
+      if (notamFilterCategory === "nav") {
+        return Boolean(/vor|dme|ils|ndb|gnss|airway|route/i.test(n.text || ""));
+      }
+      if (notamFilterCategory === "obst") {
+        return Boolean(/obst|crane|mast|tower|kite|uav|drone/i.test(n.text || ""));
+      }
+      return true;
+    });
+
     // Deduplicate NOTAM circles by location and radius to prevent compounding opacity blobs
     const grouped = new Map<string, { lat: number; lon: number; radiusKm: number; isMil: boolean; notams: any[] }>();
 
-    for (const n of props.notams) {
+    for (const n of filteredNotams) {
       if (!n.geoCircle?.lat || !n.geoCircle?.lon) continue;
       const key = `${n.geoCircle.lat.toFixed(3)}_${n.geoCircle.lon.toFixed(3)}_${(n.geoCircle.radiusKm || 5).toFixed(1)}`;
       const isMil = n.isMilitary || n.series === "B";
@@ -708,10 +743,10 @@ export function LiveBoardMap(props: {
         radius: item.radiusKm * 1000,
         color: col,
         weight: 1.0,
-        opacity: 0.35,
+        opacity: notamOpacity > 0 ? 0.35 : 0.1,
         dashArray: "4 6",
         fillColor: col,
-        fillOpacity: 0.025,
+        fillOpacity: notamOpacity,
       })
         .bindPopup(popupHtml)
         .addTo(g);
@@ -730,7 +765,7 @@ export function LiveBoardMap(props: {
       g.remove();
       if (notamLayerRef.current === g) notamLayerRef.current = null;
     };
-  }, [showNotamZones, props.notams]);
+  }, [showNotamZones, props.notams, notamFilterCategory, notamOpacity, notamSearch]);
 
   // NOAA Aviation Weather (METAR/TAF) Layer
   useEffect(() => {
@@ -1069,6 +1104,15 @@ export function LiveBoardMap(props: {
         </button>
         <button
           type="button"
+          className={`map-tool-btn ${showNotamDrawer ? "active" : ""}`}
+          onClick={() => setShowNotamDrawer(!showNotamDrawer)}
+          title="Airspace restrictions, NOTAM categories and opacity filter"
+        >
+          <span className="dot-ind" />
+          ⚙️ NOTAM FILTERS
+        </button>
+        <button
+          type="button"
           className={`map-tool-btn ${showWeatherStations ? "active" : ""}`}
           onClick={() => setShowWeatherStations(!showWeatherStations)}
         >
@@ -1076,6 +1120,192 @@ export function LiveBoardMap(props: {
           🌦️ METAR ({props.weather?.length || 0})
         </button>
       </div>
+
+      {/* Floating Tactical Airspace Restriction & NOTAM Filter Drawer */}
+      {showNotamDrawer && (
+        <div
+          style={{
+            position: "absolute",
+            top: "54px",
+            left: "14px",
+            zIndex: 1000,
+            width: "360px",
+            maxHeight: "80vh",
+            background: "rgba(10, 16, 26, 0.95)",
+            border: "1px solid rgba(255, 138, 61, 0.4)",
+            borderRadius: "8px",
+            padding: "14px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.8)",
+            backdropFilter: "blur(8px)",
+            color: "#e2e8f0",
+            fontFamily: "monospace",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "6px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 800, color: "#ff8a3d" }}>
+              ⚠️ AIRSPACE RESTRICTION & NOTAM FILTERS
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowNotamDrawer(false)}
+              style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "14px", fontWeight: 700 }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Opacity slider */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+              <span style={{ color: "#94a3b8" }}>CIRCLE FILL OPACITY:</span>
+              <b style={{ color: "#ff8a3d" }}>{(notamOpacity * 100).toFixed(1)}%</b>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="0.30"
+              step="0.005"
+              value={notamOpacity}
+              onChange={(e) => setNotamOpacity(parseFloat(e.target.value))}
+              style={{ width: "100%", accentColor: "#ff8a3d" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", color: "#64748b" }}>
+              <span>0% (Outline only)</span>
+              <span>2.5% (Crystal clear)</span>
+              <span>30% (High contrast)</span>
+            </div>
+          </div>
+
+          {/* Category Chips */}
+          <div>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "6px" }}>CATEGORY:</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+              {[
+                { id: "all", label: "ALL NOTAMS" },
+                { id: "mil", label: "🔴 MILITARY / DANGER" },
+                { id: "ad", label: "🛫 AERODROME / RWY" },
+                { id: "nav", label: "📡 NAVAID / ROUTE" },
+                { id: "obst", label: "🏗️ OBSTACLES" },
+              ].map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setNotamFilterCategory(cat.id as any)}
+                  style={{
+                    background: notamFilterCategory === cat.id ? "rgba(255, 138, 61, 0.25)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${notamFilterCategory === cat.id ? "#ff8a3d" : "rgba(255,255,255,0.1)"}`,
+                    color: notamFilterCategory === cat.id ? "#ff8a3d" : "#94a3b8",
+                    padding: "3px 8px",
+                    borderRadius: "4px",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Search Input */}
+          <div>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>KEYWORD / LOCATION SEARCH:</div>
+            <input
+              type="text"
+              value={notamSearch}
+              onChange={(e) => setNotamSearch(e.target.value)}
+              placeholder="e.g. LJMB, LJLJ, LJCE, TSA, PARAGLIDING..."
+              style={{
+                width: "100%",
+                background: "#050911",
+                border: "1px solid #334155",
+                borderRadius: "4px",
+                color: "#ff8a3d",
+                padding: "4px 8px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+              }}
+            />
+          </div>
+
+          {/* Active NOTAMs Quick List */}
+          <div style={{ flex: 1, overflowY: "auto", maxHeight: "240px", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "8px" }}>
+            <div style={{ fontSize: "10px", color: "#94a3b8", marginBottom: "6px" }}>
+              MATCHING NOTAMS ({(props.notams || []).filter((n) => {
+                if (notamSearch) {
+                  const q = notamSearch.toLowerCase();
+                  return (n.text || "").toLowerCase().includes(q) || (n.location || "").toLowerCase().includes(q) || (n.number || "").toLowerCase().includes(q);
+                }
+                if (notamFilterCategory === "mil") return Boolean(n.isMilitary || n.series === "B");
+                return true;
+              }).length}):
+            </div>
+            {(props.notams || [])
+              .filter((n) => {
+                if (notamSearch) {
+                  const q = notamSearch.toLowerCase();
+                  if (!((n.text || "").toLowerCase().includes(q) || (n.location || "").toLowerCase().includes(q) || (n.number || "").toLowerCase().includes(q))) {
+                    return false;
+                  }
+                }
+                if (notamFilterCategory === "mil") return Boolean(n.isMilitary || n.series === "B");
+                return true;
+              })
+              .slice(0, 15)
+              .map((n, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: "6px",
+                    marginBottom: "4px",
+                    background: "rgba(0,0,0,0.3)",
+                    borderLeft: `2px solid ${n.isMilitary || n.series === "B" ? "#ff4d4d" : "#ff8a3d"}`,
+                    borderRadius: "2px",
+                    fontSize: "10px",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                    <span style={{ color: n.isMilitary || n.series === "B" ? "#ff4d4d" : "#ff8a3d" }}>
+                      {n.number || "NOTAM"} · {n.location || "KZPS"}
+                    </span>
+                    {n.geoCircle?.lat && n.geoCircle?.lon && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const map = mapRef.current;
+                          if (map && n.geoCircle?.lat && n.geoCircle?.lon) {
+                            map.flyTo([n.geoCircle.lat, n.geoCircle.lon], 11, { duration: 1.2 });
+                          }
+                        }}
+                        style={{
+                          background: "rgba(255, 138, 61, 0.2)",
+                          border: "1px solid #ff8a3d",
+                          color: "#ff8a3d",
+                          padding: "1px 6px",
+                          borderRadius: "2px",
+                          fontSize: "9px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        FLY TO
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ color: "#94a3b8", marginTop: "2px" }}>
+                    {n.lowerLimit || "000"} - {n.upperLimit || "UNL"}
+                  </div>
+                  <div style={{ color: "#cbd5e1", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {n.text}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* Floating Tactical ASTERIX CAT 048 HUD Overlay */}
       {showAsterixRadar && (
@@ -1133,6 +1363,30 @@ export function LiveBoardMap(props: {
                   <span className="hud-label">TRACK HEADING</span>
                   <span className="hud-val">{Math.round(pickedPlane.track || 0)}°</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setHudPlane(pickedPlane)}
+                  style={{
+                    gridColumn: "1 / -1",
+                    marginTop: "6px",
+                    background: "linear-gradient(135deg, rgba(0, 255, 102, 0.25), rgba(0, 255, 102, 0.05))",
+                    border: "1px solid #00ff66",
+                    color: "#00ff66",
+                    borderRadius: "4px",
+                    padding: "6px 10px",
+                    fontSize: "11px",
+                    fontWeight: 900,
+                    letterSpacing: "1px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                    boxShadow: "0 0 10px rgba(0,255,102,0.3)",
+                  }}
+                >
+                  🕹️ ENGAGE 3D COCKPIT HUD / PFD AVIONICS
+                </button>
               </>
             ) : (
               <div className="hud-item" style={{ gridColumn: "1 / -1" }}>
@@ -1161,6 +1415,28 @@ export function LiveBoardMap(props: {
             <span>FL420+</span>
           </div>
         </div>
+      )}
+
+      {/* 3D Cockpit HUD / Primary Flight Display (PFD) Overlay */}
+      {hudPlane && (
+        <CockpitHudOverlay
+          plane={{
+            id: hudPlane.id,
+            callsign: callsign(hudPlane),
+            lat: hudPlane.lat,
+            lon: hudPlane.lon,
+            alt: (hudPlane as any).altFt || ((hudPlane as any).altM ? Math.round((hudPlane as any).altM * 3.28084) : 0),
+            speed: (hudPlane as any).gs || ((hudPlane as any).speedKmh ? Math.round((hudPlane as any).speedKmh * 0.539957) : 0),
+            track: hudPlane.track || 0,
+            vrate: (hudPlane as any).vrate || 0,
+            squawk: hudPlane.squawk,
+            model: (hudPlane as any).model || (hudPlane as any).typecode,
+            origin: (hudPlane as any).origin,
+            dest: (hudPlane as any).dest,
+            isMil: (hudPlane as any).mil || (hudPlane as any).isMil,
+          }}
+          onClose={() => setHudPlane(null)}
+        />
       )}
 
       <div className="omap" ref={ref} role="presentation" />

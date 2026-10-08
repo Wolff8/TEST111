@@ -4,6 +4,7 @@ import { LiveBoardMap, type MapOverlay, type RainSnap } from "../components/Live
 import { AsterixRadarScope } from "../components/AsterixRadarScope";
 import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
+import { CyberAuditDashboard } from "../components/CyberAuditDashboard";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -29,7 +30,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -839,7 +840,9 @@ export function OpsPage(props: { view: View }) {
               ? "B2B / FPL"
               : view === "spotting"
                 ? "Tactical Spotting"
-                : "Operations";
+                : view === "cyber"
+                  ? "Cyber OSINT"
+                  : "Operations";
   const note =
     view === "lora"
       ? lora?.note
@@ -851,9 +854,11 @@ export function OpsPage(props: { view: View }) {
             ? "Eurocontrol NM B2B, ICAO Doc 4444 validator, and OpenSky route resolver."
             : view === "spotting"
               ? "Unexpected arrivals, Pilatus military flights, Fraport Brnik extranet, and airband radio."
-              : view === "data"
-                ? "Live METAR, SIGMET, arrivals, NSV — tap a row or the map."
-                : "All live public feeds at once. Empty is a fact. No simulation.";
+              : view === "cyber"
+                ? "Defensive DNS/DMARC postures, crt.sh transparency logs, HTTP security headers, and GCP Spark analytics."
+                : view === "data"
+                  ? "Live METAR, SIGMET, arrivals, NSV — tap a row or the map."
+                  : "All live public feeds at once. Empty is a fact. No simulation.";
 
   const showPlanes = view === "ops" || view === "radar" || view === "data";
   const showGtw = view === "ops" || view === "lora";
@@ -1303,7 +1308,7 @@ export function OpsPage(props: { view: View }) {
         ) : null}
       </header>
 
-      {view === "data" || view === "b2b" || view === "spotting" ? null : (
+      {view === "data" || view === "b2b" || view === "spotting" || view === "cyber" ? null : (
       <div className="chips" role="tablist" aria-label="region">
         {PLACES.map((p) => (
           <button key={p.id} type="button" className={place === p.id ? "on" : ""} onClick={() => setPlace(p.id)}>
@@ -1445,7 +1450,11 @@ export function OpsPage(props: { view: View }) {
         />
       ) : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" ? null : (
+      {view === "cyber" ? (
+        <CyberAuditDashboard />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1544,7 +1553,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
-      {view === "b2b" || view === "spotting" ? null : (
+      {view === "b2b" || view === "spotting" || view === "cyber" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">
