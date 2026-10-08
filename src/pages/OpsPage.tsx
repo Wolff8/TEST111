@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
 import { LiveBoardMap, type MapOverlay, type RainSnap } from "../components/LiveBoardMap";
+import { AsterixRadarScope } from "../components/AsterixRadarScope";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -148,6 +149,7 @@ export function OpsPage(props: { view: View }) {
   const [dataLayer, setDataLayer] = useState<DataLayer>("all");
   const [live, setLive] = useState<Msg[]>([]);
   const [sheet, setSheet] = useState(false);
+  const [radarScopeMode, setRadarScopeMode] = useState(true);
   const [feeder, setFeeder] = useState<SdrFeeder | null>(null);
   const [wigle, setWigle] = useState<WigleSnap | null>(null);
   const [rf, setRf] = useState<RfSnap | null>(null);
@@ -1223,6 +1225,25 @@ export function OpsPage(props: { view: View }) {
         ) : (
           <b>{picked ? labelOf(picked) : `${loc.name} ${title}`}</b>
         )}
+        {view === "radar" ? (
+          <button
+            type="button"
+            className="scope-toggle-btn"
+            onClick={() => setRadarScopeMode((m) => !m)}
+            style={{
+              background: radarScopeMode ? "#287a55" : "rgba(30,60,50,0.6)",
+              color: "#fff",
+              border: "1px solid #3ee07a",
+              borderRadius: "4px",
+              padding: "2px 8px",
+              fontSize: "11px",
+              cursor: "pointer",
+              marginLeft: "8px",
+            }}
+          >
+            {radarScopeMode ? "MODE: ASTERIX PPI SCOPE" : "MODE: GEOGRAPHIC MAP"}
+          </button>
+        ) : null}
         <span>
           {displayKpis.map(([k, v]) => (
             <em key={String(k)}>
@@ -1363,43 +1384,52 @@ export function OpsPage(props: { view: View }) {
 
       {view === "data" && dataLayer === "catalog" ? null : (
       <div className="map-wrap">
-        <LiveBoardMap
-          center={{
-            lat: view === "radar" ? mapLoc.lat : loc.lat,
-            lon: view === "radar" ? mapLoc.lon : loc.lon,
-            zoom:
-              view === "radar" && role === "uav"
-                ? 7
-                : view === "radar"
-                  ? mapLoc.zoom
-                  : view === "data"
-                    ? 8
-                    : loc.zoom,
-          }}
-          planes={view === "data" ? dataPlanes : mapPlanes}
-          gateways={mapGtw}
-          sensors={mapSense}
-          mesh={mapMesh}
-          overlays={view === "data" ? dataOverlays : droneOverlays}
-          pick={pick}
-          onPick={focus}
-          showPlanes={showPlanes}
-          showGtw={showGtw}
-          showSensors={showSensors}
-          showMesh={view !== "radar" && view !== "data"}
-          showBorder={view === "radar" || view === "data"}
-          showFiled={role === "fpl" || role === "ifps" || role === "nm" || role === "arr" || view === "data"}
-          radio={view === "radar" ? radar?.radio || null : null}
-          rain={rain}
-          showRain={wxOn && (view === "radar" || view === "data")}
-        />
+        {view === "radar" && radarScopeMode ? (
+          <AsterixRadarScope
+            planes={mapPlanes}
+            onPickPlane={focus}
+            pickedId={pick}
+            beastStatus={feeder?.feeder}
+          />
+        ) : (
+          <LiveBoardMap
+            center={{
+              lat: view === "radar" ? mapLoc.lat : loc.lat,
+              lon: view === "radar" ? mapLoc.lon : loc.lon,
+              zoom:
+                view === "radar" && role === "uav"
+                  ? 7
+                  : view === "radar"
+                    ? mapLoc.zoom
+                    : view === "data"
+                      ? 8
+                      : loc.zoom,
+            }}
+            planes={view === "data" ? dataPlanes : mapPlanes}
+            gateways={mapGtw}
+            sensors={mapSense}
+            mesh={mapMesh}
+            overlays={view === "data" ? dataOverlays : droneOverlays}
+            pick={pick}
+            onPick={focus}
+            showPlanes={showPlanes}
+            showGtw={showGtw}
+            showSensors={showSensors}
+            showMesh={view !== "radar" && view !== "data"}
+            showBorder={view === "radar" || view === "data"}
+            showFiled={role === "fpl" || role === "ifps" || role === "nm" || role === "arr" || view === "data"}
+            radio={view === "radar" ? radar?.radio || null : null}
+            rain={rain}
+            showRain={wxOn && (view === "radar" || view === "data")}
+          />
+        )}
         {wxOn && (view === "radar" || view === "data") && rain?.now ? (
           <span className="wx-legend" aria-label="RainViewer weather radar">
             WX RainViewer · precip
             {rain.now.time ? ` · ${Math.max(0, Math.round((Date.now() / 1000 - rain.now.time) / 60))}m` : ""}
           </span>
         ) : null}
-        {mapFull ? <div className="map-chrome">{chrome}</div> : null}
+        {mapFull && !(view === "radar" && radarScopeMode) ? <div className="map-chrome">{chrome}</div> : null}
         {pickedPlane ? (
           <div className="map-hud ac">
             <PlaneHud p={pickedPlane} title={trackLabel(pickedPlane)} />

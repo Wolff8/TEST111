@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import mqtt from "mqtt";
 import * as satellite from "satellite.js";
-import { createSdrFeed } from "./sdr-feed.mjs";
+import { createSdrFeed, SDR_STATIONS, calcPolarAndCartesian } from "./sdr-feed.mjs";
 import { createWigleFeed } from "./wigle-feed.mjs";
 import { createWidebandFeed, RF_BANDS } from "./wideband-feed.mjs";
 import { fetchNmJson, fetchNmFlightsMerged, NM_FMP, NM_FMPS, nmSource, parseNmRegs, keepNmOnlyPlot, probeEaup, probeMainPages, EAUP_NOP, EAUP_VIEW_ID, EAUP_PORTAL, EAUP_MODULE, MAINPAGES_CACHE, MAINPAGES_NOCACHE, MAINPAGES_STRONG, MAINPAGES_MODULE, APT_API_GUIDE, APT_API_EDITION, APT_API_DATE, APT_API_REF, fetchEcDaily, fetchEcAirports, fetchCrcoSu, CRCO_DASH, CRCO_GUIDE, CRCO_PUB, DATA_APP, DATA_APP_VER, DASHBOARDS_LISTING, LIVETRAFFIC, DASHBOARD_OFFERS, ESASSP_PDF, ESASSP_EDITION, ESASSP_VOL, ESASSP_DATE, ESASSP_TITLE, SURV_SERVICE, SURV_TITLE, EASA_AMC_GM, EASA_AMC_GM_TITLE, MICA_PDF, MICA_EDITION, MICA_DATE, MICA_TITLE, SMGET_PAGE, SMGET_TITLE, probeHtmlHead, probeEcSitemap, EC_SITEMAP, EC_OUR_DATA, EC_UAS, ANS_PERF, AIU_PORTAL, AIU_LIVE_PAGE, AIU_LIVE_DATA, ADRR_DASH, ADRR_META, PRC_2026, TRENDS_PDF, APT_CORNER } from "./eurocontrol-feed.mjs";
@@ -3235,7 +3235,24 @@ const httpServer = createServer(async (req, res) => {
       });
       return;
     }
-    if (url.pathname === "/api/sdr" || url.pathname === "/api/beast" || url.pathname === "/api/dump1090" || url.pathname === "/api/raw") {
+    if (
+      url.pathname === "/api/sdr" ||
+      url.pathname === "/api/sdr/beast" ||
+      url.pathname === "/api/sdr/puconci" ||
+      url.pathname === "/api/sdr/dolina43" ||
+      url.pathname === "/api/sdr/ljms" ||
+      url.pathname === "/api/beast" ||
+      url.pathname === "/api/dump1090" ||
+      url.pathname === "/api/raw"
+    ) {
+      const stationId = url.pathname.endsWith("/puconci")
+        ? "puconci"
+        : url.pathname.endsWith("/dolina43")
+        ? "dolina43"
+        : url.pathname.endsWith("/ljms")
+        ? "ljms"
+        : url.searchParams.get("station") || "puconci";
+
       if (req.method === "POST") {
         if (!ridAuthOk(req, url)) {
           res.writeHead(401, cors);
@@ -3244,11 +3261,11 @@ const httpServer = createServer(async (req, res) => {
         }
         const buf = await readBodyBuffer(req, 2_000_000);
         const ctype = String(req.headers["content-type"] || "");
-        const rec = sdrFeed.ingestRaw(buf, ctype);
+        const rec = sdrFeed.ingestStationRaw(stationId, buf, ctype);
         expireMap(sdrTracks);
         bustLiveCaches();
         res.writeHead(200, cors);
-        res.end(JSON.stringify({ ok: true, ...rec, live: sdrTracks.size }));
+        res.end(JSON.stringify({ ok: true, stationId, ...rec, live: sdrTracks.size }));
         return;
       }
       expireMap(sdrTracks);
@@ -3259,7 +3276,134 @@ const httpServer = createServer(async (req, res) => {
           n: sdrTracks.size,
           items: [...sdrTracks.values()],
           feeder: sdrFeed.status,
+          stations: SDR_STATIONS,
           howto: sdrHowto(req),
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === "/api/asterix/cat048" || url.pathname === "/api/cat048/live") {
+      const stnId = url.searchParams.get("station") || "puconci";
+      const origin = SDR_STATIONS[stnId] || SDR_STATIONS.puconci;
+      const now = Date.now();
+      expireMap(sdrTracks);
+      // Derive single-sensor isolated CAT 048 target observations from REAL live tracks
+      const live = (lastRadarItems.length ? lastRadarItems : [...sdrTracks.values()]).filter((p) => p.lat && p.lon);
+      const targets = live
+        .map((p) => {
+          const pol = calcPolarAndCartesian(origin, p.lat, p.lon);
+          const isMilHeli =
+            p.role === "heli" ||
+            p.fastLow ||
+            /^(RANGR|LSV|SVN|SV)/i.test(p.flight || "") ||
+            /^L2-0[1-4]$/i.test(p.reg || "") ||
+            p.ownOp === "Slovenska vojska" ||
+            (p.altFt != null && p.altFt < 1500 && (p.gs || 0) > 100);
+          const isBalloon = p.role === "balloon" || /sonde|hab/i.test(`${p.typecode} ${p.desc}`);
+          const isUav = p.role === "uav" || p.src === "rid" || /dji|drone/i.test(`${p.typecode} ${p.model}`);
+          const isEcho = p.role === "echo" || p.src === "psr" || p.src === "echo";
+
+          let cat048Type = "SSR_MODE_S";
+          let typNum = 5; // Mode S Roll-Call
+          if (isMilHeli) {
+            cat048Type = "MIL_HELI_LOW";
+            typNum = 3; // SSR + PSR
+          } else if (isBalloon) {
+            cat048Type = "BALLOON_HAB";
+            typNum = 2; // SSR
+          } else if (isUav) {
+            cat048Type = "DRONE_RID";
+            typNum = 4; // Mode S All-call / RID
+          } else if (isEcho) {
+            cat048Type = "PSR_PASSIVE";
+            typNum = 1; // Single PSR
+          }
+
+          return {
+            id: p.id,
+            flight: p.flight || "NO CALL",
+            squawk: p.squawk || "7000",
+            altFt: p.altFt,
+            fl: p.altFt != null ? Math.round(p.altFt / 100) : null,
+            gs: p.gs,
+            track: p.track,
+            // CAT 048 Slant Polar Coordinates
+            rhoNm: pol.rhoNm,
+            thetaDeg: pol.thetaDeg,
+            // CAT 048 2D Cartesian Coordinates
+            cartX: pol.cartX,
+            cartY: pol.cartY,
+            descriptor: {
+              typ: typNum,
+              sim: 0,
+              rdp: 0,
+              spi: 0,
+              rab: 0,
+            },
+            classification: cat048Type,
+            tod: Math.round(((now % 86400000) / 1000) * 128) / 128,
+            trail: (trails.get(p.id) || []).slice(-8).map((pt) => ({
+              ...pt,
+              ...calcPolarAndCartesian(origin, pt.lat, pt.lon),
+            })),
+          };
+        })
+        .filter((t) => t.rhoNm <= 150); // within 150 NM radar coverage
+
+      res.writeHead(200, cors);
+      res.end(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          station: {
+            id: origin.id,
+            name: origin.name,
+            sac: origin.sac,
+            sic: origin.sic,
+            lat: origin.lat,
+            lon: origin.lon,
+            freqMhz: origin.freqMhz,
+            antenna: origin.antenna,
+            rpm: origin.rpm,
+          },
+          targetCount: targets.length,
+          targets,
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === "/api/atc/streams") {
+      res.writeHead(200, cors);
+      res.end(
+        JSON.stringify({
+          ok: true,
+          streams: [
+            { id: "ljlj-twr", airport: "Ljubljana", icao: "LJLJ", title: "Ljubljana Tower", freq: "118.475 MHz", url: "https://www.liveatc.net/search/?icao=LJLJ" },
+            { id: "ljlj-app", airport: "Ljubljana", icao: "LJLJ", title: "Ljubljana Radar / Approach", freq: "135.250 MHz", url: "https://www.liveatc.net/search/?icao=LJLJ" },
+            { id: "lowg-app", airport: "Graz", icao: "LOWG", title: "Graz Approach / Tower", freq: "119.300 MHz", url: "https://www.liveatc.net/search/?icao=LOWG" },
+            { id: "ldza-app", airport: "Zagreb", icao: "LDZA", title: "Zagreb Radar / Approach", freq: "120.700 MHz", url: "https://www.liveatc.net/search/?icao=LDZA" },
+          ],
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === "/api/open-apis/scanner") {
+      res.writeHead(200, cors);
+      res.end(
+        JSON.stringify({
+          ok: true,
+          apis: [
+            { id: "opensky", name: "OpenSky Network Public API", type: "ADS-B", status: "active", endpoint: "https://opensky-network.org/api/states/all" },
+            { id: "adsbfi", name: "adsb.fi Public Feeds", type: "ADS-B & Military", status: "active", endpoint: "https://opendata.adsb.fi/api/v3" },
+            { id: "adsblol", name: "adsb.lol Open Data", type: "ADS-B & UAV", status: "active", endpoint: "https://api.adsb.lol" },
+            { id: "sondehub", name: "SondeHub Radiosonde API", type: "Weather Balloons", status: "active", endpoint: "https://api.v2.sondehub.org" },
+            { id: "ogn", name: "Open Glider Network (OGN)", type: "Gliders & Drones", status: "active", endpoint: "http://aprs.glidernet.org:14501" },
+            { id: "ttn", name: "The Things Network Packet Broker", type: "LoRaWAN Gateways", status: "active", endpoint: "https://mapper.packetbroker.net/api/v2" },
+            { id: "rainviewer", name: "RainViewer Meteorological Radar", type: "Weather Radar", status: "active", endpoint: "https://api.rainviewer.com/public/weather-maps.json" },
+            { id: "liveatc", name: "LiveATC.net Regional ATC Audio", type: "Air Traffic Radio", status: "active", endpoint: "https://www.liveatc.net" },
+          ],
         }),
       );
       return;

@@ -4,6 +4,74 @@ const AIS = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######";
 const CPR = 131072;
 const NZ = 15;
 
+export const SDR_STATIONS = {
+  puconci: {
+    id: "puconci",
+    name: "Puconci SDR (Prekmurje)",
+    lat: 46.7042,
+    lon: 16.1601,
+    altM: 220,
+    sac: 250,
+    sic: 43,
+    freqMhz: 1090,
+    antenna: "1090 MHz Collinear Omni 5.5 dBi",
+    role: "sdr-receiver",
+    rpm: 15,
+  },
+  dolina43: {
+    id: "dolina43",
+    name: "Dolina 43 SDR (Lendava)",
+    lat: 46.5412,
+    lon: 16.5024,
+    altM: 165,
+    sac: 250,
+    sic: 44,
+    freqMhz: 1090,
+    antenna: "1090 MHz Sector Array 8 dBi",
+    role: "sdr-receiver",
+    rpm: 15,
+  },
+  ljms: {
+    id: "ljms",
+    name: "LJMS Murska Sobota Radar Head",
+    lat: 46.6590,
+    lon: 16.1720,
+    altM: 184,
+    sac: 250,
+    sic: 21,
+    freqMhz: 1090,
+    antenna: "Monopulse SSR / PSR Array",
+    role: "radar-head",
+    rpm: 15,
+  },
+};
+
+export function calcPolarAndCartesian(origin, lat, lon) {
+  if (!origin || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { rhoNm: 0, thetaDeg: 0, cartX: 0, cartY: 0 };
+  }
+  const φ1 = (origin.lat * Math.PI) / 180;
+  const φ2 = (lat * Math.PI) / 180;
+  const Δφ = φ2 - φ1;
+  const Δλ = ((lon - origin.lon) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const distM = 2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(a)));
+  const rhoNm = distM / 1852;
+  const yVal = Math.sin(Δλ) * Math.cos(φ2);
+  const xVal = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  let thetaDeg = (Math.atan2(yVal, xVal) * 180) / Math.PI;
+  if (thetaDeg < 0) thetaDeg += 360;
+  const rad = (thetaDeg * Math.PI) / 180;
+  const cartX = rhoNm * Math.sin(rad);
+  const cartY = rhoNm * Math.cos(rad);
+  return {
+    rhoNm: Math.round(rhoNm * 256) / 256,
+    thetaDeg: Math.round(thetaDeg * 100) / 100,
+    cartX: Math.round(cartX * 128) / 128,
+    cartY: Math.round(cartY * 128) / 128,
+  };
+}
+
 export function createSdrFeed(sdrTracks, onChange) {
   const cpr = new Map();
   const status = {
@@ -15,27 +83,56 @@ export function createSdrFeed(sdrTracks, onChange) {
     frames: 0,
     lastAt: 0,
     lastErr: "",
+    stations: {
+      puconci: { frames: 0, bytes: 0, lastAt: 0 },
+      dolina43: { frames: 0, bytes: 0, lastAt: 0 },
+      ljms: { frames: 0, bytes: 0, lastAt: 0 },
+    },
   };
 
   function bump() {
     onChange?.();
   }
 
-  function upsert(hex, patch) {
+  function upsert(hex, patch, stationId = "puconci") {
     const id = String(hex || "")
       .toLowerCase()
       .replace(/^~/, "")
       .replace(/[^0-9a-f]/g, "");
     if (!id || id.length < 4) return false;
+    const stn = SDR_STATIONS[stationId] || SDR_STATIONS.puconci;
     const prev = sdrTracks.get(id) || { hex: id, type: "sdr" };
-    const next = { ...prev, ...patch, hex: id, type: "sdr", at: Date.now() };
+    const next = {
+      ...prev,
+      ...patch,
+      hex: id,
+      type: "sdr",
+      at: Date.now(),
+      stationId: stn.id,
+      stationName: stn.name,
+      sac: stn.sac,
+      sic: stn.sic,
+    };
     if (patch.flight) next.flight = String(patch.flight).trim();
+    const finalLat = patch.lat ?? prev.lat;
+    const finalLon = patch.lon ?? prev.lon;
+    if (Number.isFinite(finalLat) && Number.isFinite(finalLon) && finalLat && finalLon) {
+      const pol = calcPolarAndCartesian(stn, finalLat, finalLon);
+      next.rhoNm = pol.rhoNm;
+      next.thetaDeg = pol.thetaDeg;
+      next.cartX = pol.cartX;
+      next.cartY = pol.cartY;
+    }
     sdrTracks.set(id, next);
     status.lastAt = Date.now();
+    if (status.stations[stn.id]) {
+      status.stations[stn.id].lastAt = Date.now();
+      status.stations[stn.id].frames += 1;
+    }
     return true;
   }
 
-  function ingestSbsLine(line) {
+  function ingestSbsLine(line, stationId = "puconci") {
     const t = String(line || "").trim();
     if (!t.startsWith("MSG,")) return 0;
     const f = t.split(",");
@@ -126,14 +223,14 @@ export function createSdrFeed(sdrTracks, onChange) {
     return { n, heard };
   }
 
-  function decodeModeS(frame, rssi) {
+  function decodeModeS(frame, rssi, stationId = "puconci") {
     if (!frame || frame.length < 7) return false;
     const df = frame[0] >> 3;
     const patch = {};
     if (rssi != null) patch.rssi = rssi;
     if (df === 11) {
       status.frames += 1;
-      return upsert(frame.subarray(1, 4).toString("hex"), patch);
+      return upsert(frame.subarray(1, 4).toString("hex"), patch, stationId);
     }
     if (df !== 17 && df !== 18) return false;
     const hex = frame.subarray(1, 4).toString("hex");
@@ -160,7 +257,7 @@ export function createSdrFeed(sdrTracks, onChange) {
     }
     status.frames += 1;
     if (!Object.keys(patch).length) return false;
-    return upsert(hex, patch);
+    return upsert(hex, patch, stationId);
   }
 
   function decodeCallsign(me) {
@@ -225,7 +322,7 @@ export function createSdrFeed(sdrTracks, onChange) {
     return { gs: Math.round(gs), track: Math.round(track) };
   }
 
-  function consumeBeast(buf) {
+  function consumeBeast(buf, stationId = "puconci") {
     let i = 0;
     while (i < buf.length) {
       const start = buf.indexOf(0x1a, i);
@@ -267,24 +364,25 @@ export function createSdrFeed(sdrTracks, onChange) {
       }
       const rssi = raw[6];
       const frame = Buffer.from(raw.slice(7, 7 + payload));
-      decodeModeS(frame, rssi);
+      decodeModeS(frame, rssi, stationId);
       i = j;
     }
     return Buffer.alloc(0);
   }
 
-  function attach(sock) {
+  function attach(sock, stationId = "puconci") {
     status.clients += 1;
     let bin = Buffer.alloc(0);
     let ascii = "";
     sock.setTimeout(180_000);
     sock.on("data", (chunk) => {
       status.bytes += chunk.length;
+      if (status.stations[stationId]) status.stations[stationId].bytes += chunk.length;
       const looksText = !bin.length && (chunk.includes(0x4d) || chunk[0] === 0x2a || chunk[0] === 0x3a);
       const looksBeast = chunk.includes(0x1a) || bin.length;
       if (looksBeast) {
         bin = Buffer.concat([bin, chunk]);
-        bin = consumeBeast(bin);
+        bin = consumeBeast(bin, stationId);
       }
       if (looksText || ascii) {
         ascii += chunk.toString("utf8");
@@ -292,8 +390,8 @@ export function createSdrFeed(sdrTracks, onChange) {
         const parts = ascii.split(/\r?\n/);
         ascii = parts.pop() || "";
         for (const line of parts) {
-          ingestSbsLine(line);
-          ingestAvrLine(line);
+          ingestSbsLine(line, stationId);
+          ingestAvrLine(line, stationId);
         }
       }
       bump();
@@ -308,15 +406,15 @@ export function createSdrFeed(sdrTracks, onChange) {
     });
   }
 
-  function listen(port = status.listenPort) {
+  function listen(port = status.listenPort, stationId = "puconci") {
     status.listenPort = port;
-    const srv = createServer((sock) => attach(sock));
+    const srv = createServer((sock) => attach(sock, stationId));
     srv.on("error", (e) => {
       status.lastErr = String(e.message || e);
       console.error("sdr tcp", e.message || e);
     });
     srv.listen(port, "0.0.0.0", () => {
-      console.log(`sdr feeder tcp on 0.0.0.0:${port} (Beast / SBS-1 / AVR)`);
+      console.log(`sdr feeder tcp on 0.0.0.0:${port} [${stationId}] (Beast / SBS-1 / AVR)`);
     });
     return srv;
   }
@@ -326,42 +424,50 @@ export function createSdrFeed(sdrTracks, onChange) {
     if (port) status.tcpPort = Number(port);
   }
 
-  function ingestBeast(buf) {
+  function ingestBeast(buf, stationId = "puconci") {
     const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
     if (!raw.length) return { n: 0, heard: 0, beast: true };
     const before = sdrTracks.size;
-    consumeBeast(raw);
+    consumeBeast(raw, stationId);
     return { n: Math.max(0, sdrTracks.size - before), heard: status.frames, beast: true, live: sdrTracks.size };
   }
 
-  function ingestRaw(buf, ctype = "") {
+  function ingestStationBeast(stationId, buf) {
+    return ingestBeast(buf, stationId);
+  }
+
+  function ingestRaw(buf, ctype = "", stationId = "puconci") {
     const raw = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
     if (!raw.length) return { n: 0, heard: 0 };
-    if (/octet-stream|x-beast|x-binary/i.test(ctype) || raw.includes(0x1a)) return ingestBeast(raw);
+    if (/octet-stream|x-beast|x-binary/i.test(ctype) || raw.includes(0x1a)) return ingestBeast(raw, stationId);
     const text = raw.toString("utf8");
     const trim = text.trim();
     if (trim.startsWith("{") || trim.startsWith("[")) {
       try {
-        return ingestDump1090(JSON.parse(trim));
+        return ingestDump1090(JSON.parse(trim), stationId);
       } catch {
         /* fall through */
       }
     }
-    if (trim.startsWith("MSG,") || trim.includes("*") || /^\s*@/.test(trim)) return ingestText(text);
+    if (trim.startsWith("MSG,") || trim.includes("*") || /^\s*@/.test(trim)) return ingestText(text, stationId);
     const hex = trim.replace(/[^0-9a-fA-F]/g, "");
     if (hex.length >= 14 && hex.length % 2 === 0) {
       let n = 0;
       for (let i = 0; i + 14 <= hex.length; ) {
         const take = hex.length - i >= 28 ? 28 : 14;
-        if (decodeModeS(Buffer.from(hex.slice(i, i + take), "hex"))) n += 1;
+        if (decodeModeS(Buffer.from(hex.slice(i, i + take), "hex"), null, stationId)) n += 1;
         i += take;
       }
       return { n, heard: status.frames, hex: true, live: sdrTracks.size };
     }
-    return ingestText(text);
+    return ingestText(text, stationId);
   }
 
-  function connect(host, port = 30005) {
+  function ingestStationRaw(stationId, buf, ctype = "") {
+    return ingestRaw(buf, ctype, stationId);
+  }
+
+  function connect(host, port = 30005, stationId = "puconci") {
     if (!host) return null;
     const dest = Number(port) || 30005;
     const sock = createConnection({ host, port: dest });
@@ -373,7 +479,7 @@ export function createSdrFeed(sdrTracks, onChange) {
       status.tcpHost = host;
       status.tcpPort = dest;
     });
-    attach(sock);
+    attach(sock, stationId);
     return sock;
   }
 
@@ -382,7 +488,9 @@ export function createSdrFeed(sdrTracks, onChange) {
     ingestText,
     ingestSbsLine,
     ingestBeast,
+    ingestStationBeast,
     ingestRaw,
+    ingestStationRaw,
     consumeBeast,
     decodeModeS,
     listen,
@@ -390,6 +498,8 @@ export function createSdrFeed(sdrTracks, onChange) {
     setPublic,
     status,
     upsert,
+    SDR_STATIONS,
+    calcPolarAndCartesian,
   };
 }
 
