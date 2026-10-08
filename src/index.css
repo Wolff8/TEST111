@@ -1217,4 +1217,292 @@ button, a { font: inherit; color: inherit; touch-action: manipulation; -webkit-t
   to { transform: translateY(0); opacity: 1; }
 }
 
+/* Asterix Tactical Radar Scope Responsive Styles */
+.asterix-radar-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: #03070a;
+  color: #a5d8b8;
+  font-family: 'Share Tech Mono', monospace, monospace;
+  padding: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.asterix-radar-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99999 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  background: #020508 !important;
+  padding: calc(8px + env(safe-area-inset-top)) 10px calc(8px + env(safe-area-inset-bottom)) 10px !important;
+}
+
+.asterix-radar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(40, 160, 120, 0.3);
+  padding-bottom: 8px;
+}
+
+.asterix-radar-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.asterix-radar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.asterix-radar-pulse {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3ee07a;
+  box-shadow: 0 0 8px #3ee07a;
+  animation: radarPulse 1.8s infinite;
+}
+
+@keyframes radarPulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+.asterix-radar-stations-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.asterix-radar-station-btn {
+  background: rgba(20, 50, 40, 0.6);
+  color: #a5d8b8;
+  border: 1px solid rgba(62, 224, 122, 0.4);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  touch-action: manipulation;
+  min-height: 36px;
+}
+
+.asterix-radar-station-btn.active {
+  background: #287a55;
+  color: #ffffff;
+  border-color: #3ee07a;
+  box-shadow: 0 0 10px rgba(62, 224, 122, 0.3);
+}
+
+.asterix-radar-fullscreen-btn {
+  background: rgba(0, 102, 204, 0.25);
+  color: #60a5fa;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 36px;
+}
+
+.asterix-radar-ticker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  background: rgba(6, 16, 22, 0.8);
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(40, 160, 120, 0.25);
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.asterix-radar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.asterix-radar-scope-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #020406;
+  border-radius: 8px;
+  border: 1px solid rgba(40, 160, 120, 0.35);
+  overflow: hidden;
+  min-height: 360px;
+}
+
+.asterix-radar-canvas {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.asterix-radar-stats-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 11px;
+  pointer-events: none;
+  background: rgba(4, 10, 14, 0.82);
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(40, 160, 120, 0.3);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.asterix-radar-controls-bar {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+  background: rgba(4, 10, 14, 0.88);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(40, 160, 120, 0.3);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.asterix-radar-ctrl-btn {
+  background: transparent;
+  color: #a5d8b8;
+  border: 1px solid rgba(60, 220, 140, 0.4);
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 28px;
+}
+
+.asterix-radar-ctrl-btn.active {
+  background: #3ee07a;
+  color: #040a0f;
+  font-weight: 700;
+}
+
+.asterix-radar-sidebar-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.asterix-radar-mobile-tabs {
+  display: none;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+  background: rgba(4, 12, 16, 0.9);
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(40, 160, 120, 0.3);
+}
+
+.asterix-radar-mobile-tab-btn {
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 38px;
+  text-align: center;
+}
+
+.asterix-radar-mobile-tab-btn.active {
+  background: rgba(40, 160, 120, 0.3);
+  border-color: #3ee07a;
+  color: #3ee07a;
+  box-shadow: 0 0 8px rgba(62, 224, 122, 0.25);
+}
+
+.asterix-radar-quick-target-sheet {
+  position: absolute;
+  bottom: 56px;
+  left: 10px;
+  right: 10px;
+  background: rgba(8, 24, 18, 0.95);
+  border: 1px solid #3ee07a;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #b8ebd0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 10;
+}
+
+@media (max-width: 960px) {
+  .asterix-radar-mobile-tabs {
+    display: grid;
+  }
+  .asterix-radar-layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .asterix-radar-scope-col {
+    width: 100%;
+    min-height: auto;
+  }
+  .asterix-radar-canvas {
+    max-width: 100%;
+    aspect-ratio: 1 / 1;
+  }
+  .asterix-radar-controls-bar {
+    position: static;
+    margin-top: 6px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .asterix-radar-ctrl-btn {
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+}
+
+
 

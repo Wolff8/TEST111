@@ -6,7 +6,7 @@ import { AsterixCadRadarScope } from "../components/AsterixCadRadarScope";
 import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
 import { CyberAuditDashboard } from "../components/CyberAuditDashboard";
-import { TacticalAirbandAudioBar } from "../components/TacticalAirbandAudioBar";
+import { NetworkWiresharkInspector } from "../components/NetworkWiresharkInspector";
 import { LiveStream } from "../components/LiveStream";
 import { TelemetryHud, PlaneHud } from "../components/Gauges";
 import { LiveGraph, Spark } from "../components/Spark";
@@ -32,7 +32,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber" | "cad";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber" | "cad" | "network";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -844,7 +844,11 @@ export function OpsPage(props: { view: View }) {
                 ? "Tactical Spotting"
                 : view === "cyber"
                   ? "Cyber OSINT"
-                  : "Operations";
+                  : view === "cad"
+                    ? "CAD Radar"
+                    : view === "network"
+                      ? "Wireshark Packet Dissector"
+                      : "Operations";
   const note =
     view === "lora"
       ? lora?.note
@@ -858,6 +862,10 @@ export function OpsPage(props: { view: View }) {
               ? "Unexpected arrivals, Pilatus military flights, Fraport Brnik extranet, and airband radio."
               : view === "cyber"
                 ? "Defensive DNS/DMARC postures, crt.sh transparency logs, HTTP security headers, and GCP Spark analytics."
+                : view === "cad"
+                  ? "ASTERIX CAT 021/048 CAD Radar with FLARM/OGN 868MHz LJMS receiver, PCL bistatic ellipses, and MLAT surface movement."
+                : view === "network"
+                  ? "Local network interface capture, live ASTERIX/Beast dissector, raw hex dump, and pcap export."
                 : view === "data"
                   ? "Live METAR, SIGMET, arrivals, NSV — tap a row or the map."
                   : "All live public feeds at once. Empty is a fact. No simulation.";
@@ -1310,7 +1318,7 @@ export function OpsPage(props: { view: View }) {
         ) : null}
       </header>
 
-      {view === "data" || view === "b2b" || view === "spotting" || view === "cyber" ? null : (
+      {view === "data" || view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" ? null : (
       <div className="chips" role="tablist" aria-label="region">
         {PLACES.map((p) => (
           <button key={p.id} type="button" className={place === p.id ? "on" : ""} onClick={() => setPlace(p.id)}>
@@ -1466,7 +1474,11 @@ export function OpsPage(props: { view: View }) {
         />
       ) : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" ? null : (
+      {view === "network" ? (
+        <NetworkWiresharkInspector />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1565,7 +1577,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
-      {view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" ? null : (
+      {view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" || view === "network" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">
@@ -1752,12 +1764,6 @@ export function OpsPage(props: { view: View }) {
       ) : null}
       </div>
       )}
-
-      {/* Persistent European Airband Tactical Audio Communicator */}
-      <TacticalAirbandAudioBar
-        unexpectedCount={mapPlanes.filter((p) => p.role === "small" && p.altFt < 4000).length}
-        militaryCount={mapPlanes.filter((p) => p.role === "aero" || p.role === "jet" || Boolean(p.flight && (/SVN|HOUDR/i.test(p.flight) || (p.reg && /^L[196]-/i.test(p.reg))))).length}
-      />
     </div>
   );
 }

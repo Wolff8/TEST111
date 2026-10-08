@@ -31,10 +31,10 @@ export const RADAR_STATIONS: Record<RadarStationId, RadarStation> = {
   },
   dolina43: {
     id: "dolina43",
-    name: "Dolina 43 SDR Head (Lendava)",
-    lat: 46.5412,
-    lon: 16.5024,
-    altM: 165,
+    name: "Dolina (Puconci) SDR Head",
+    lat: 46.74567394991525,
+    lon: 16.194033073880615,
+    altM: 265,
     sac: 250,
     sic: 44,
     freqMhz: 1090,
@@ -105,33 +105,42 @@ export function AsterixRadarScope({
   const [showPhosphor, setShowPhosphor] = useState<boolean>(true);
   const [filterType, setFilterType] = useState<"all" | "mil" | "uav" | "balloon" | "echo">("all");
   const [sweepAngle, setSweepAngle] = useState<number>(0);
-  const [audioUrl, setAudioUrl] = useState<string>("");
-  const [isPlayingAudio, setIsPlayingAudio] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [mobileTab, setMobileTab] = useState<"scope" | "targets" | "notams" | "weather" | "apis">("scope");
   const [activeTab, setActiveTab] = useState<"targets" | "notams" | "weather" | "apis">("targets");
   const [notamData, setNotamData] = useState<any>(null);
   const [weatherData, setWeatherData] = useState<any>(null);
   const [radarWeatherData, setRadarWeatherData] = useState<any>(null);
   const [notamSearch, setNotamSearch] = useState<string>("");
   const [notamCategory, setNotamCategory] = useState<"all" | "mil" | "drone">("all");
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [showNotamZones, setShowNotamZones] = useState<boolean>(true);
+  const [ognData, setOgnData] = useState<any>(null);
+  const [dronetagData, setDronetagData] = useState<any>(null);
+  const [openskyData, setOpenskyData] = useState<any>(null);
 
   useEffect(() => {
     const fetchAviationData = async () => {
       try {
-        const [nRes, wRes, rRes] = await Promise.all([
+        const [nRes, wRes, rRes, oRes, dRes, osRes] = await Promise.all([
           fetch("/api/aviation/notams").then((r) => r.json()).catch(() => null),
           fetch("/api/aviation/weather").then((r) => r.json()).catch(() => null),
           fetch("/api/aviation/radar-weather").then((r) => r.json()).catch(() => null),
+          fetch("/api/ogn/live").then((r) => r.json()).catch(() => null),
+          fetch("/api/dronetag/live").then((r) => r.json()).catch(() => null),
+          fetch("/api/opensky/live").then((r) => r.json()).catch(() => null),
         ]);
         if (nRes) setNotamData(nRes);
         if (wRes) setWeatherData(wRes);
         if (rRes) setRadarWeatherData(rRes);
+        if (oRes) setOgnData(oRes);
+        if (dRes) setDronetagData(dRes);
+        if (osRes) setOpenskyData(osRes);
       } catch (e) {
         console.warn("Failed to fetch aviation live data:", e);
       }
     };
     fetchAviationData();
-    const interval = setInterval(fetchAviationData, 60_000);
+    const interval = setInterval(fetchAviationData, 15_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -180,13 +189,14 @@ export function AsterixRadarScope({
 
         const isBalloon = p.role === "balloon" || /sonde|hab/i.test(`${p.typecode} ${p.desc}`);
         const isUav = p.role === "uav" || p.src === "rid" || /dji|drone/i.test(`${p.typecode} ${p.model}`);
+        const isGlider = p.role === "glider" || p.role === "soar" || p.src === "ogn" || (p as any).type === "ogn" || /glider|flarm/i.test(`${p.typecode} ${p.model}`);
         const isEcho = p.role === "echo" || p.src === "psr" || p.src === "echo";
-        const isCivil = !isMilHeli && !isBalloon && !isUav && !isEcho;
 
-        let classification: "MIL_HELI" | "BALLOON" | "DRONE_RID" | "PSR" | "SSR_CIVIL" = "SSR_CIVIL";
+        let classification: "MIL_HELI" | "BALLOON" | "DRONE_RID" | "GLIDER" | "PSR" | "SSR_CIVIL" = "SSR_CIVIL";
         if (isMilHeli) classification = "MIL_HELI";
         else if (isBalloon) classification = "BALLOON";
         else if (isUav) classification = "DRONE_RID";
+        else if (isGlider) classification = "GLIDER";
         else if (isEcho) classification = "PSR";
 
         return {
@@ -311,6 +321,46 @@ export function AsterixRadarScope({
     ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
     ctx.fill();
 
+    // Draw Active Airspace NOTAM Restrictions (KZPS Official Geometries)
+    if (showNotamZones && notamData?.notams) {
+      notamData.notams.forEach((n: any) => {
+        if (!n.geoCircle) return;
+        const pol = calcPolar(station, n.geoCircle.lat, n.geoCircle.lon);
+        const distPct = pol.rhoNm / rangeNm;
+        if (distPct > 1.35) return;
+
+        const rad = ((pol.thetaDeg - 90) * Math.PI) / 180;
+        const nx = cx + radius * distPct * Math.cos(rad);
+        const ny = cy + radius * distPct * Math.sin(rad);
+        const ringPx = Math.max(5, (n.geoCircle.radiusNm / rangeNm) * radius);
+
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        if (n.isMilitary) {
+          ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
+          ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        } else if (n.isDroneRestriction) {
+          ctx.strokeStyle = "rgba(245, 158, 11, 0.75)";
+          ctx.fillStyle = "rgba(245, 158, 11, 0.08)";
+        } else {
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.55)";
+          ctx.fillStyle = "rgba(56, 189, 248, 0.05)";
+        }
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(nx, ny, ringPx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.font = "8px monospace";
+        ctx.fillStyle = n.isMilitary ? "#f87171" : n.isDroneRestriction ? "#fbbf24" : "#38bdf8";
+        ctx.textAlign = "center";
+        ctx.fillText(`${n.number} [${n.geoCircle.radiusNm}NM]`, nx, ny - ringPx - 2);
+        ctx.restore();
+      });
+    }
+
     // Draw real targets
     isolatedTargets.forEach((target) => {
       // Map polar coordinates to canvas
@@ -347,7 +397,7 @@ export function AsterixRadarScope({
           ctx.fillStyle = target.classification === "MIL_HELI"
             ? `rgba(255, 140, 40, ${trailAgeAlpha})`
             : target.classification === "DRONE_RID"
-            ? `rgba(255, 100, 200, ${trailAgeAlpha})`
+            ? `rgba(244, 63, 94, ${trailAgeAlpha})`
             : `rgba(60, 220, 160, ${trailAgeAlpha})`;
           ctx.beginPath();
           ctx.arc(px, py, 1.8, 0, Math.PI * 2);
@@ -403,10 +453,35 @@ export function AsterixRadarScope({
         ctx.arc(tx, ty, 2, 0, Math.PI * 2);
         ctx.fill();
       } else if (target.classification === "DRONE_RID") {
-        // Direct Remote ID Drone (Hexagon)
-        ctx.strokeStyle = "#ff4d8d";
+        // Direct Remote ID Quadcopter Drone (Tactical Drone Glyph)
+        ctx.strokeStyle = isPicked ? "#ffffff" : "#f43f5e";
+        ctx.fillStyle = "#f43f5e";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(tx - 6, ty - 6);
+        ctx.lineTo(tx + 6, ty + 6);
+        ctx.moveTo(tx + 6, ty - 6);
+        ctx.lineTo(tx - 6, ty + 6);
+        ctx.stroke();
+        [-6, 6].forEach((dx) => {
+          [-6, 6].forEach((dy) => {
+            ctx.beginPath();
+            ctx.arc(tx + dx, ty + dy, 2, 0, Math.PI * 2);
+            ctx.stroke();
+          });
+        });
+      } else if (target.classification === "GLIDER") {
+        // Glider / Soaring (Swept V-wing)
+        ctx.strokeStyle = isPicked ? "#ffffff" : "#06b6d4";
         ctx.lineWidth = 1.8;
-        ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+        ctx.beginPath();
+        ctx.moveTo(tx - 8, ty - 3);
+        ctx.lineTo(tx, ty + 4);
+        ctx.lineTo(tx + 8, ty - 3);
+        ctx.stroke();
       } else if (target.classification === "PSR") {
         // Primary Radar Only Blip (Slash / Diamond)
         ctx.strokeStyle = "#70d6ff";
@@ -457,13 +532,17 @@ export function AsterixRadarScope({
     });
   }, [isolatedTargets, rangeNm, vectorMin, showTrails, showPhosphor, station, pickedId]);
 
-  // Handle canvas click to pick aircraft
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Handle canvas pointer (click & touch) with scaled coordinates for mobile & desktop
+  const handleCanvasPointer = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
+    if (!rect.width || !rect.height) return;
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clickX = (clientX - rect.left) * scaleX;
+    const clickY = (clientY - rect.top) * scaleY;
 
     const width = canvas.width;
     const height = canvas.height;
@@ -472,7 +551,7 @@ export function AsterixRadarScope({
     const radius = Math.min(cx, cy) - 24;
 
     let closestId: string | null = null;
-    let closestDist = 20; // 20px hit tolerance
+    let closestDist = 28 * scaleX; // Adjusted hit tolerance for responsive display
 
     isolatedTargets.forEach((target) => {
       const targetDistPct = target.rhoNm / rangeNm;
@@ -495,65 +574,48 @@ export function AsterixRadarScope({
 
   const pickedTarget = isolatedTargets.find((t) => t.id === pickedId);
 
-  // Live ATC Audio stream toggler
-  const toggleLiveAtc = (url: string) => {
-    if (audioRef.current) {
-      if (isPlayingAudio && audioUrl === url) {
-        audioRef.current.pause();
-        setIsPlayingAudio(false);
-      } else {
-        setAudioUrl(url);
-        audioRef.current.src = url;
-        audioRef.current.play().catch(() => {});
-        setIsPlayingAudio(true);
-      }
-    }
-  };
-
   return (
-    <div className="asterix-radar-container" style={{ background: "#03070a", color: "#a5d8b8", fontFamily: "monospace", padding: "12px", borderRadius: "8px" }}>
+    <div className={`asterix-radar-container ${isFullscreen ? "asterix-radar-fullscreen" : ""}`}>
       {/* Top Header & Single Sensor Isolation Controls */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "8px", borderBottom: "1px solid rgba(40, 160, 120, 0.3)", paddingBottom: "8px" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#3ee07a", boxShadow: "0 0 8px #3ee07a" }} />
-            <strong style={{ fontSize: "16px", color: "#3ee07a", letterSpacing: "1px" }}>
+      <div className="asterix-radar-header">
+        <div className="asterix-radar-title-group">
+          <div className="asterix-radar-title-row">
+            <span className="asterix-radar-pulse" />
+            <strong style={{ fontSize: "15px", color: "#3ee07a", letterSpacing: "1px" }}>
               ASTERIX CAT 048 TACTICAL RADAR SCOPE
             </strong>
-            <span style={{ fontSize: "11px", background: "rgba(40,160,120,0.2)", padding: "2px 6px", borderRadius: "4px" }}>
+            <span style={{ fontSize: "10px", background: "rgba(40,160,120,0.2)", padding: "2px 6px", borderRadius: "4px" }}>
               SINGLE SENSOR ISOLATION
             </span>
           </div>
           <small style={{ color: "#74b391" }}>
-            Active Sensor Antenna: <strong>{station.name}</strong> · SAC: <strong>{station.sac}</strong> / SIC: <strong>{station.sic}</strong> ({station.lat.toFixed(4)}°N, {station.lon.toFixed(4)}°E)
+            Active Sensor: <strong>{station.name}</strong> · SAC: <strong>{station.sac}</strong> / SIC: <strong>{station.sic}</strong> ({station.lat.toFixed(4)}°N, {station.lon.toFixed(4)}°E)
           </small>
         </div>
 
-        {/* Station Head Selector */}
-        <div style={{ display: "flex", gap: "6px" }}>
+        {/* Station Head & Fullscreen Selectors */}
+        <div className="asterix-radar-stations-group">
           {(Object.keys(RADAR_STATIONS) as RadarStationId[]).map((id) => (
             <button
               key={id}
               type="button"
               onClick={() => setStationId(id)}
-              style={{
-                background: stationId === id ? "#287a55" : "rgba(20,50,40,0.6)",
-                color: stationId === id ? "#ffffff" : "#a5d8b8",
-                border: "1px solid #3ee07a",
-                borderRadius: "4px",
-                padding: "5px 10px",
-                cursor: "pointer",
-                fontWeight: stationId === id ? "bold" : "normal",
-                fontSize: "12px",
-              }}
+              className={`asterix-radar-station-btn ${stationId === id ? "active" : ""}`}
             >
-              🛰️ {id === "puconci" ? "Puconci SDR" : id === "dolina43" ? "Dolina 43 SDR" : "LJMS Head"}
+              🛰️ {id === "puconci" ? "Puconci SDR" : id === "dolina43" ? "Dolina 43" : "LJMS Head"}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className="asterix-radar-fullscreen-btn"
+          >
+            {isFullscreen ? "✕ EXIT" : "📱 IPHONE FULLSCREEN"}
+          </button>
         </div>
 
         {/* Real-Time Airspace & Weather Ticker Ribbon */}
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", width: "100%", background: "rgba(6,16,22,0.8)", padding: "5px 10px", borderRadius: "5px", border: "1px solid rgba(40,160,120,0.25)", fontSize: "11px" }}>
+        <div className="asterix-radar-ticker">
           <span style={{ color: "#3ee07a", fontWeight: "bold" }}>● LIVE SI INTEL:</span>
           {weatherData?.stations?.slice(0, 3).map((st: any) => (
             <span key={st.icao} style={{ background: "rgba(18,45,35,0.7)", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(60,220,140,0.2)" }}>
@@ -564,6 +626,21 @@ export function AsterixRadarScope({
           {notamData && (
             <span style={{ background: "rgba(45,28,18,0.7)", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(245,158,11,0.3)" }}>
               <strong style={{ color: "#f59e0b" }}>NOTAMs:</strong> {notamData.totalCount} ACTIVE (<strong style={{ color: "#ef4444" }}>{notamData.militaryActiveCount} MIL</strong>)
+            </span>
+          )}
+          {dronetagData?.stats && (
+            <span style={{ background: "rgba(45,18,28,0.7)", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(244,63,94,0.3)" }}>
+              <strong style={{ color: "#f43f5e" }}>DRONES:</strong> {dronetagData.stats.activeDronesCount} RID
+            </span>
+          )}
+          {ognData?.stats && (
+            <span style={{ background: "rgba(18,35,45,0.7)", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(6,182,212,0.3)" }}>
+              <strong style={{ color: "#06b6d4" }}>OGN:</strong> {ognData.stats.totalTargets} (<strong style={{ color: "#a855f7" }}>{ognData.stats.glidersCount} GLD</strong>)
+            </span>
+          )}
+          {openskyData?.stats && (
+            <span style={{ background: "rgba(18,25,45,0.7)", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(59,130,246,0.3)" }}>
+              <strong style={{ color: "#3b82f6" }}>SSR:</strong> {openskyData.stats.activeTracksInSlovenia} SI
             </span>
           )}
           {radarWeatherData?.latestTime && (
@@ -577,20 +654,65 @@ export function AsterixRadarScope({
         </div>
       </div>
 
+      {/* Mobile Segmented Tab Navigator */}
+      <div className="asterix-radar-mobile-tabs">
+        <button
+          type="button"
+          onClick={() => setMobileTab("scope")}
+          className={`asterix-radar-mobile-tab-btn ${mobileTab === "scope" ? "active" : ""}`}
+        >
+          🎯 RADAR
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMobileTab("targets"); setActiveTab("targets"); }}
+          className={`asterix-radar-mobile-tab-btn ${mobileTab === "targets" ? "active" : ""}`}
+        >
+          📋 HUD
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMobileTab("notams"); setActiveTab("notams"); }}
+          className={`asterix-radar-mobile-tab-btn ${mobileTab === "notams" ? "active" : ""}`}
+        >
+          ⚠️ NOTAM ({notamData?.totalCount || 0})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMobileTab("weather"); setActiveTab("weather"); }}
+          className={`asterix-radar-mobile-tab-btn ${mobileTab === "weather" ? "active" : ""}`}
+        >
+          ⛅ METAR
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMobileTab("apis"); setActiveTab("apis"); }}
+          className={`asterix-radar-mobile-tab-btn ${mobileTab === "apis" ? "active" : ""}`}
+        >
+          🌐 APIS
+        </button>
+      </div>
+
       {/* Main Radar Layout: Scope Canvas + Tactical Telemetry HUD */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "14px" }}>
-        {/* Canvas Radar Viewport */}
-        <div style={{ position: "relative", display: "flex", justifyContent: "center", alignItems: "center", background: "#020406", borderRadius: "8px", border: "1px solid rgba(40,160,120,0.35)", overflow: "hidden" }}>
+      <div className="asterix-radar-layout">
+        {/* Canvas Radar Viewport (Always visible on desktop, visible on mobile when tab is 'scope') */}
+        <div
+          className="asterix-radar-scope-col"
+          style={{ display: mobileTab !== "scope" && typeof window !== "undefined" && window.innerWidth <= 960 ? "none" : "flex" }}
+        >
           <canvas
             ref={canvasRef}
             width={720}
             height={720}
-            onClick={handleCanvasClick}
-            style={{ width: "100%", maxWidth: "720px", height: "auto", cursor: "crosshair" }}
+            onClick={(e) => handleCanvasPointer(e.clientX, e.clientY)}
+            onTouchStart={(e) => {
+              if (e.touches[0]) handleCanvasPointer(e.touches[0].clientX, e.touches[0].clientY);
+            }}
+            className="asterix-radar-canvas"
           />
 
           {/* Radar Overlay Stats Bar */}
-          <div style={{ position: "absolute", top: "12px", left: "14px", fontSize: "11px", pointerEvents: "none", background: "rgba(4,10,14,0.75)", padding: "6px 10px", borderRadius: "4px", border: "1px solid rgba(40,160,120,0.3)" }}>
+          <div className="asterix-radar-stats-overlay">
             <div>SWEEP AZIMUTH: <strong style={{ color: "#3ee07a" }}>{String(sweepAngle).padStart(3, "0")}°</strong></div>
             <div>RANGE SCALE: <strong style={{ color: "#3ee07a" }}>{rangeNm} NM</strong></div>
             <div>TRACKS IN THEATER: <strong style={{ color: "#3ee07a" }}>{isolatedTargets.length}</strong></div>
@@ -598,22 +720,14 @@ export function AsterixRadarScope({
           </div>
 
           {/* Quick Scope Controls (Range & Filter) */}
-          <div style={{ position: "absolute", bottom: "12px", left: "14px", display: "flex", gap: "6px", flexWrap: "wrap", background: "rgba(4,10,14,0.85)", padding: "6px", borderRadius: "6px", border: "1px solid rgba(40,160,120,0.3)" }}>
+          <div className="asterix-radar-controls-bar">
             <span style={{ fontSize: "11px", alignSelf: "center", marginRight: "4px" }}>RANGE:</span>
             {[10, 25, 50, 80, 120].map((r) => (
               <button
                 key={r}
                 type="button"
                 onClick={() => setRangeNm(r)}
-                style={{
-                  background: rangeNm === r ? "#3ee07a" : "transparent",
-                  color: rangeNm === r ? "#040a0f" : "#a5d8b8",
-                  border: "1px solid rgba(60,220,140,0.4)",
-                  padding: "2px 6px",
-                  borderRadius: "3px",
-                  fontSize: "10px",
-                  cursor: "pointer",
-                }}
+                className={`asterix-radar-ctrl-btn ${rangeNm === r ? "active" : ""}`}
               >
                 {r}NM
               </button>
@@ -625,15 +739,7 @@ export function AsterixRadarScope({
                 key={m}
                 type="button"
                 onClick={() => setVectorMin(m)}
-                style={{
-                  background: vectorMin === m ? "#3ee07a" : "transparent",
-                  color: vectorMin === m ? "#040a0f" : "#a5d8b8",
-                  border: "1px solid rgba(60,220,140,0.4)",
-                  padding: "2px 6px",
-                  borderRadius: "3px",
-                  fontSize: "10px",
-                  cursor: "pointer",
-                }}
+                className={`asterix-radar-ctrl-btn ${vectorMin === m ? "active" : ""}`}
               >
                 {m}m
               </button>
@@ -642,29 +748,91 @@ export function AsterixRadarScope({
             <button
               type="button"
               onClick={() => setShowTrails(!showTrails)}
+              className="asterix-radar-ctrl-btn"
               style={{
                 background: showTrails ? "rgba(60,220,140,0.2)" : "transparent",
                 color: "#3ee07a",
-                border: "1px solid rgba(60,220,140,0.4)",
-                padding: "2px 8px",
-                borderRadius: "3px",
-                fontSize: "10px",
-                cursor: "pointer",
                 marginLeft: "6px",
               }}
             >
               TRAILS: {showTrails ? "ON" : "OFF"}
             </button>
+
+            <button
+              type="button"
+              onClick={() => setShowNotamZones(!showNotamZones)}
+              className="asterix-radar-ctrl-btn"
+              style={{
+                background: showNotamZones ? "rgba(245,158,11,0.25)" : "transparent",
+                color: showNotamZones ? "#fbbf24" : "#99d1b0",
+                border: "1px solid rgba(245,158,11,0.4)",
+                marginLeft: "6px",
+              }}
+            >
+              NOTAM: {showNotamZones ? "ON" : "OFF"}
+            </button>
           </div>
+
+          {/* Mobile / Scope Quick Target Drawer */}
+          {pickedTarget && (
+            <div className="asterix-radar-quick-target-sheet">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ color: "#fffa65", fontSize: "14px" }}>
+                    {pickedTarget.flight || pickedTarget.id}
+                  </strong>
+                  <span style={{ fontSize: "10px", background: "#ff8a3d", color: "#000", padding: "1px 5px", borderRadius: "3px", fontWeight: "bold", marginLeft: "6px" }}>
+                    {pickedTarget.classification}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onPickPlane?.("")}
+                  style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "16px", padding: "2px 6px" }}
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "4px", fontSize: "11px", color: "#e2e8f0" }}>
+                <span>ICAO: <strong style={{ color: "#3ee07a" }}>{pickedTarget.id?.toUpperCase()}</strong></span>
+                <span>SQWK: <strong>{pickedTarget.squawk || "7000"}</strong></span>
+                <span>ALT: <strong>{pickedTarget.altFt != null ? `${pickedTarget.altFt} FT (FL${Math.round(pickedTarget.altFt / 100)})` : "---"}</strong></span>
+                <span>GS: <strong>{pickedTarget.gs != null ? `${Math.round(pickedTarget.gs)} KT` : "---"}</strong></span>
+                <span>RHO: <strong>{pickedTarget.rhoNm} NM</strong></span>
+                <span>θ: <strong>{pickedTarget.thetaDeg}°</strong></span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setMobileTab("targets"); setActiveTab("targets"); }}
+                style={{
+                  marginTop: "6px",
+                  width: "100%",
+                  background: "#287a55",
+                  color: "#fff",
+                  border: "1px solid #3ee07a",
+                  borderRadius: "4px",
+                  padding: "5px",
+                  fontSize: "11px",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                }}
+              >
+                📋 VIEW FULL CAT 048 TELEMETRY IN HUD
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Right Tactical Telemetry & Multi-Domain Airspace Tabs */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {/* Tactical Tab Navigator */}
+        {/* Right Tactical Telemetry & Multi-Domain Airspace Tabs (Visible on desktop always, or on mobile when tab is NOT 'scope') */}
+        <div
+          className="asterix-radar-sidebar-col"
+          style={{ display: mobileTab === "scope" && typeof window !== "undefined" && window.innerWidth <= 960 ? "none" : "flex" }}
+        >
+          {/* Tactical Tab Navigator (Desktop) */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px" }}>
             <button
               type="button"
-              onClick={() => setActiveTab("targets")}
+              onClick={() => { setActiveTab("targets"); setMobileTab("targets"); }}
               style={{
                 background: activeTab === "targets" ? "#287a55" : "rgba(14,35,28,0.6)",
                 color: activeTab === "targets" ? "#ffffff" : "#99d1b0",
@@ -680,7 +848,7 @@ export function AsterixRadarScope({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("notams")}
+              onClick={() => { setActiveTab("notams"); setMobileTab("notams"); }}
               style={{
                 background: activeTab === "notams" ? "#287a55" : "rgba(14,35,28,0.6)",
                 color: activeTab === "notams" ? "#ffffff" : "#99d1b0",
@@ -696,7 +864,7 @@ export function AsterixRadarScope({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("weather")}
+              onClick={() => { setActiveTab("weather"); setMobileTab("weather"); }}
               style={{
                 background: activeTab === "weather" ? "#287a55" : "rgba(14,35,28,0.6)",
                 color: activeTab === "weather" ? "#ffffff" : "#99d1b0",
@@ -712,7 +880,7 @@ export function AsterixRadarScope({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("apis")}
+              onClick={() => { setActiveTab("apis"); setMobileTab("apis"); }}
               style={{
                 background: activeTab === "apis" ? "#287a55" : "rgba(14,35,28,0.6)",
                 color: activeTab === "apis" ? "#ffffff" : "#99d1b0",
@@ -791,7 +959,7 @@ export function AsterixRadarScope({
                 </div>
               ) : (
                 <div style={{ background: "rgba(10,24,20,0.6)", padding: "12px", borderRadius: "6px", border: "1px solid rgba(40,160,120,0.25)", fontSize: "11px", textAlign: "center", color: "#74b391" }}>
-                  Click any blip on the radar scope to view full CAT 048 flight strip telemetry.
+                  Click or tap any blip on the radar scope to view full CAT 048 flight strip telemetry.
                 </div>
               )}
 
@@ -942,34 +1110,6 @@ export function AsterixRadarScope({
               </div>
             </div>
           )}
-
-          {/* Live ATC Radio Audio Stream Player */}
-          <div style={{ background: "rgba(8,20,16,0.85)", padding: "10px", borderRadius: "6px", border: "1px solid rgba(40,160,120,0.3)", fontSize: "11px" }}>
-            <div style={{ fontWeight: "bold", color: "#3ee07a", marginBottom: "6px" }}>
-              🎙️ LIVE ATC RADIO STREAMS
-            </div>
-            <audio ref={audioRef} />
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              {[
-                { name: "Ljubljana (LJLJ) Tower", freq: "118.475 MHz", url: "https://www.liveatc.net/search/?icao=LJLJ" },
-                { name: "Ljubljana (LJLJ) Radar", freq: "135.250 MHz", url: "https://www.liveatc.net/search/?icao=LJLJ" },
-                { name: "Graz (LOWG) Approach", freq: "119.300 MHz", url: "https://www.liveatc.net/search/?icao=LOWG" },
-                { name: "Zagreb (LDZA) Radar", freq: "120.700 MHz", url: "https://www.liveatc.net/search/?icao=LDZA" },
-              ].map((st, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(16,40,30,0.5)", padding: "3px 6px", borderRadius: "3px" }}>
-                  <span>{st.name} <small style={{ color: "#5bb88a" }}>({st.freq})</small></span>
-                  <a
-                    href={st.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: "#3ee07a", textDecoration: "none", fontSize: "10px", border: "1px solid rgba(40,160,120,0.4)", padding: "1px 5px", borderRadius: "3px" }}
-                  >
-                    Listen ↗
-                  </a>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>
