@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { io } from "socket.io-client";
 import { LiveBoardMap, type MapOverlay, type RainSnap } from "../components/LiveBoardMap";
 import { AsterixRadarScope } from "../components/AsterixRadarScope";
+import { AsterixCadRadarScope } from "../components/AsterixCadRadarScope";
 import { B2BExchangeDashboard } from "../components/B2BExchangeDashboard";
 import { SpottingTacticalFeed } from "../components/SpottingTacticalFeed";
 import { CyberAuditDashboard } from "../components/CyberAuditDashboard";
@@ -30,7 +31,7 @@ import {
 
 const socket = io({ transports: ["websocket", "polling"] });
 
-type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber";
+type View = "ops" | "lora" | "sensors" | "radar" | "data" | "b2b" | "spotting" | "cyber" | "cad";
 type RoleFilter = "sky" | "all" | "uav" | "gnd" | "modes" | "bird" | "echo" | "soar" | "glider" | "balloon" | "chute" | "aero" | "local" | "low" | "silent" | "jet" | "heli" | "small" | "unknown" | "heard" | "nm" | "fpl" | "ifps" | "arr" | "asterix";
 const ROLE_LAB: Record<RoleFilter, string> = {
   all: "All",
@@ -1454,7 +1455,17 @@ export function OpsPage(props: { view: View }) {
         <CyberAuditDashboard />
       ) : null}
 
-      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" ? null : (
+      {view === "cad" ? (
+        <AsterixCadRadarScope
+          planes={mapPlanes}
+          onPinpointPlane={(planeId) => {
+            setPick(planeId);
+            window.location.hash = "#/radar";
+          }}
+        />
+      ) : null}
+
+      {view === "data" && dataLayer === "catalog" ? null : view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" ? null : (
       <div className="map-wrap">
         {view === "radar" && radarScopeMode ? (
           <AsterixRadarScope
@@ -1553,7 +1564,7 @@ export function OpsPage(props: { view: View }) {
       </div>
       )}
 
-      {view === "b2b" || view === "spotting" || view === "cyber" ? null : (
+      {view === "b2b" || view === "spotting" || view === "cyber" || view === "cad" ? null : (
       <div className={mapFull ? `below${view === "radar" || view === "data" ? (pickedPlane || (view === "data" && pickedData) ? " hide" : sheet ? " open" : " peek") : ""}` : undefined}>
       {view !== "radar" && view !== "data" ? (
       <section className="kpis" aria-label="live counts">

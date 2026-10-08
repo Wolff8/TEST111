@@ -54,7 +54,14 @@ import {
   fetchRainViewerRadar,
   fetchTatGlobeCentralEurope,
 } from "./aviation-live-feed.mjs";
-import { startOgnClient, getOgnLiveTargets, getOgnStats } from "./ogn-live-feed.mjs";
+import { startOgnClient, getOgnLiveTargets, getOgnStats, getOgnRawPackets, LJMS_RADAR } from "./ogn-live-feed.mjs";
+import {
+  MLAT_STATIONS,
+  ILLUMINATORS_OF_OPPORTUNITY,
+  AERODROME_SURFACES,
+  calculateBistaticTelemetry,
+  analyzeMlatSurfaceTargets,
+} from "./pcl-multilateration-feed.mjs";
 import { startDronetagClient, getDronetagLiveTargets, getDronetagStats, getDronetagOperations } from "./dronetag-live-feed.mjs";
 import { startOpenSkyPoller, getOpenSkyLiveTargets, getOpenSkyStats } from "./opensky-live-feed.mjs";
 import {
@@ -4027,6 +4034,47 @@ const httpServer = createServer(async (req, res) => {
       const bqTable = url.searchParams.get("output") || "ops_project.aviation_security.anomalies";
       const script = generateSparkCyberJob({ inputPath, bqTable });
       sendJson(req, res, { ok: true, script, runtime: "Dataproc Serverless / PySpark 3.4" });
+      return;
+    }
+    if (url.pathname === "/api/ogn/raw" || url.pathname === "/api/ogn/packets" || url.pathname === "/api/ogn/ljms") {
+      const onlyLjms = url.pathname === "/api/ogn/ljms" || url.searchParams.get("ljms") === "1";
+      const packets = getOgnRawPackets(onlyLjms);
+      sendJson(req, res, {
+        ok: true,
+        count: packets.length,
+        filter: onlyLjms ? "LJMS_GATEWAY_ONLY" : "SLOVENIA_ALL",
+        gatewayStation: LJMS_RADAR,
+        packets,
+      });
+      return;
+    }
+    if (url.pathname === "/api/pcl/telemetry" || url.pathname === "/api/pcl/bistatic") {
+      const targets = getOgnLiveTargets();
+      const radar = await loadRadar("si").catch(() => ({ items: [] }));
+      const allTargets = [...targets, ...(radar.items || [])];
+      const enriched = analyzeMlatSurfaceTargets(allTargets.slice(0, 35));
+      sendJson(req, res, {
+        ok: true,
+        receiverStation: MLAT_STATIONS[0],
+        stations: MLAT_STATIONS,
+        illuminators: ILLUMINATORS_OF_OPPORTUNITY,
+        aerodromes: AERODROME_SURFACES,
+        count: enriched.length,
+        targets: enriched,
+      });
+      return;
+    }
+    if (url.pathname === "/api/mlat/surface" || url.pathname === "/api/surface/movement") {
+      const targets = getOgnLiveTargets();
+      const radar = await loadRadar("si").catch(() => ({ items: [] }));
+      const allTargets = [...targets, ...(radar.items || [])];
+      const surfaceOnly = analyzeMlatSurfaceTargets(allTargets).filter((t) => t.isSurfaceMovement || t.altFt <= 500);
+      sendJson(req, res, {
+        ok: true,
+        count: surfaceOnly.length,
+        aerodromes: AERODROME_SURFACES,
+        targets: surfaceOnly,
+      });
       return;
     }
     if (url.pathname === "/api/eurofpl" || url.pathname === "/api/fpl" || url.pathname === "/api/fpl-live" || url.pathname === "/api/routes") {

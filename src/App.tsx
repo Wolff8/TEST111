@@ -14,6 +14,7 @@ export function App() {
           <Route path="/b2b" element={<OpsPage view="b2b" />} />
           <Route path="/spotting" element={<OpsPage view="spotting" />} />
           <Route path="/cyber" element={<OpsPage view="cyber" />} />
+          <Route path="/cad" element={<OpsPage view="cad" />} />
         </Routes>
         <Nav />
       </div>
@@ -27,6 +28,7 @@ function Nav() {
     { to: "/lora", lab: "LoRa", ic: "◈" },
     { to: "/sensors", lab: "Sensors", ic: "◉" },
     { to: "/radar", lab: "Radar", ic: "✈" },
+    { to: "/cad", lab: "CAD Radar", ic: "📐" },
     { to: "/data", lab: "Data", ic: "▤" },
     { to: "/b2b", lab: "B2B / FPL", ic: "⇄" },
     { to: "/spotting", lab: "Spotting / Mil", ic: "🔭" },

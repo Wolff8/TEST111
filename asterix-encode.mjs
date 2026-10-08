@@ -108,22 +108,27 @@ export function polarFromWgs(origin, lat, lon) {
   return { rhoNm: distM / NM_M, thetaDeg: θ };
 }
 
+/** CAT 021 ADS-B & FLARM Target Report (Eurocontrol ASTERIX Spec v2.4) */
 export function encodeCat021(p, site = TRANSCODE_SITE) {
   const lat = Number(p.lat);
   const lon = Number(p.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  const gs = Math.max(0, Number(p.gs) || 0);
+  const icao = icaoBuf(p.icao || p.id || p.hex);
+  const altFt = Number(p.altFt ?? p.alt) || 0;
+  const fl = clamp(Math.round((altFt / 100) * 4), -8191, 8191);
+  const gs = Math.max(0, Number(p.speedKnots ?? p.gs ?? p.speed) || 0);
   const trk = ((Number(p.track) || 0) + 360) % 360;
+
   const payload = Buffer.concat([
-    writeFspec([1, 6, 11, 12, 21, 26, 29]),
-    Buffer.from([site.sac & 0xff, site.sic & 0xff]),
-    putI24(lat / WGS23),
-    putI24(lon / WGS23),
-    icaoBuf(p.icao || p.id || p.hex),
-    putI24(todNow()).subarray(0, 3),
-    putI16(flRaw(p.altFt ?? p.alt)),
-    Buffer.concat([putU16((gs / 3600) * 2 ** 14), putU16(trk / DEG16)]),
-    call6(p),
+    writeFspec([1, 2, 3, 4, 7, 8, 11, 16]),
+    Buffer.from([site.sac & 0xff, site.sic & 0xff]), // I021/010 Data Source ID
+    Buffer.from([p.isFlarm ? 0x48 : 0x20]), // I021/040 Target Report Descriptor (FLARM / 1090)
+    putI24(todNow()).subarray(0, 3), // I021/073 Time of Day
+    Buffer.concat([putI24(lat / WGS23), putI24(lon / WGS23)]), // I021/130 WGS-84 Position
+    putI16(fl), // I021/140 Geometric Altitude / Flight Level
+    icao.length === 3 ? icao : Buffer.from([0, 0, 0]), // I021/080 Target Address
+    call6(p), // I021/170 Target Identification (Callsign)
+    Buffer.concat([putU16(gs * 2 ** 14 / 3600), putU16(trk / DEG16)]), // I021/200 Ground Speed & Track Angle
   ]);
   return block(21, payload);
 }
@@ -271,6 +276,36 @@ export function encodeCat025(origin, site = TRANSCODE_SITE) {
     Buffer.concat([putI32(origin.lat / WGS32), putI32(origin.lon / WGS32)]),
   ]);
   return block(25, payload);
+}
+
+
+/** CAT 010 Monoradar Surface Movement & Multilateration (Eurocontrol Spec v1.1)
+ * Used for surface movement at airfields (LJMS, LJMB, LJLJ) and low-altitude non-GPS MLAT. */
+export function encodeCat010(p, origin = DEFAULT_RADAR, site = { sac: 0, sic: 10 }) {
+  const lat = Number(p.lat);
+  const lon = Number(p.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const pol = polarFromWgs(origin, lat, lon);
+  const distM = pol.rhoNm * 1852;
+  const thetaRad = pol.thetaDeg * (Math.PI / 180);
+  const cartX = Math.round(distM * Math.sin(thetaRad));
+  const cartY = Math.round(distM * Math.cos(thetaRad));
+  const icao = icaoBuf(p.icao || p.id || p.hex);
+  const altFt = Number(p.altFt ?? p.alt) || 0;
+  const isOnGround = altFt <= 200 || p.onGround;
+
+  const payload = Buffer.concat([
+    writeFspec([1, 2, 3, 4, 5, 9, 10, 14]),
+    Buffer.from([site.sac & 0xff, site.sic & 0xff]), // I010/010 Data Source ID (Surface MLAT)
+    Buffer.from([0x01]), // I010/000 Message Type: Target Report
+    Buffer.from([isOnGround ? 0x82 : 0x02]), // I010/020 Target Report Descriptor (Multilateration + Ground bit)
+    putI24(todNow()).subarray(0, 3), // I010/140 Time of Day
+    Buffer.concat([putI16(clamp(cartX, -32768, 32767)), putI16(clamp(cartY, -32768, 32767))]), // I010/042 Cartesian Position
+    putU16(modeA(p)), // I010/060 Mode 3/A
+    putI16(flRaw(altFt)), // I010/090 Flight Level
+    icao.length === 3 ? icao : Buffer.from([0, 0, 0]), // I010/220 Target Address
+  ]);
+  return block(10, payload);
 }
 
 function asPlane(p) {
