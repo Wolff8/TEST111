@@ -59,13 +59,13 @@ function hexRgb(h: string): [number, number, number] {
   return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
 }
 
-export const TRAIL_MIN_MS = 15 * 60_000;
+export const TRAIL_MIN_MS = 30 * 60_000;
 
-/** Oldest trail end fades to nearly gone by 15 minutes. */
+/** Oldest trail end remains clearly visible for 30 minutes. */
 export function fadeTrailOpacity(ageMs: number, picked = false) {
-  const t = 1 - Math.min(1.12, Math.max(0, Number(ageMs) || 0) / TRAIL_MIN_MS);
+  const t = 1 - Math.min(1.0, Math.max(0, Number(ageMs) || 0) / TRAIL_MIN_MS);
   const u = Math.max(0, t);
-  return Math.max(0.02, Math.pow(u, 1.4) * (picked ? 0.96 : 0.9));
+  return Math.max(0.2, Math.pow(u, 1.1) * (picked ? 0.98 : 0.92));
 }
 
 /** Smooth altitude colour — lerp between stops so trails read as height, not bands. */
@@ -144,6 +144,29 @@ export type Plane = {
   noPos?: boolean;
   adsbType?: string;
   passiveBalloon?: boolean;
+  isMil?: boolean;
+  rotorSig?: {
+    helicopterName: string;
+    blades: number;
+    nominalRpm: number;
+    bladePassingFreqHz: number;
+    bladeTipSpeedMps: number;
+    maxDopplerSpreadHz: number;
+    hermSnrDb: number;
+    modulationStatus: string;
+  } | null;
+  pclTelemetry?: {
+    illuminatorId?: string;
+    illuminatorName: string;
+    freqMhz: number;
+    bistaticRangeKm: number;
+    bistaticDelayUs: number;
+    bistaticAngleDeg: number;
+    dopplerHz: number;
+    estimatedRcsM2: number;
+    isForwardScatter: boolean;
+    ellipsePoints?: [number, number][];
+  } | null;
 };
 
 export type Sat = {
