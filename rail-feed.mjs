@@ -158,7 +158,7 @@ export const SLOVENIA_RAIL_LINES = [
   },
 ];
 
-// Detailed Multi-Track Station Schematics (Zoomed-in station tracks & interlocking)
+// Detailed Multi-Track Station Schematics (Zoomed-in station tracks & infrastructure)
 // Mapped from official ERA Knowledge Graph (RINF) database
 export const DETAILED_STATION_TRACKS = [
   // Murska Sobota Station Multi-Track Layout (ERA UOPID: SI43704)
@@ -168,7 +168,7 @@ export const DETAILED_STATION_TRACKS = [
     tracks: [
       { id: "MS-T1", eraId: "0079_SI43704_Tir-1", name: "Tir 1 (Glavni prehodni peron)", type: "PASSENGER_MAIN", maxSpeedKmh: 100, lengthM: 680, occupied: false, trainId: "", lat1: 46.6622, lon1: 16.1736, lat2: 46.6635, lon2: 16.1726 },
       { id: "MS-T2", eraId: "0079_SI43704_Tir-2", name: "Tir 2 (Prehitevni peron)", type: "PASSENGER_LOOP", maxSpeedKmh: 50, lengthM: 650, occupied: false, trainId: "", lat1: 46.6624, lon1: 16.1738, lat2: 46.6637, lon2: 16.1728 },
-      { id: "MS-T3", eraId: "0079_SI43704_Tir-3", name: "Tir 3 (Glavni tovorni tranzitni tir)", type: "FREIGHT_TRANSIT", maxSpeedKmh: 80, lengthM: 740, occupied: true, trainId: "SZ-48401", lat1: 46.6626, lon1: 16.1740, lat2: 46.6639, lon2: 16.1730 },
+      { id: "MS-T3", eraId: "0079_SI43704_Tir-3", name: "Tir 3 (Glavni tovorni tranzitni tir)", type: "FREIGHT_TRANSIT", maxSpeedKmh: 80, lengthM: 740, occupied: false, trainId: "", lat1: 46.6626, lon1: 16.1740, lat2: 46.6639, lon2: 16.1730 },
       { id: "MS-T4", eraId: "0079_SI43704_Tir-4", name: "Tir 4 (Ranžirni plato & carina)", type: "FREIGHT_YARD", maxSpeedKmh: 40, lengthM: 620, occupied: false, trainId: "", lat1: 46.6628, lon1: 16.1742, lat2: 46.6641, lon2: 16.1732 },
       { id: "MS-T101", eraId: "0079_SI43704_Tir-101", name: "Tir 101 (Nakladalni tir les / Pomgrad)", type: "INDUSTRIAL_SIDING", maxSpeedKmh: 30, lengthM: 480, occupied: false, trainId: "", lat1: 46.6630, lon1: 16.1744, lat2: 46.6643, lon2: 16.1734 },
       { id: "MS-T103", eraId: "0079_SI43704_Tir-103", name: "Tir 103 (Žitni silosi Mlinopek)", type: "GRAIN_SIDING", maxSpeedKmh: 25, lengthM: 390, occupied: false, trainId: "", lat1: 46.6632, lon1: 16.1746, lat2: 46.6645, lon2: 16.1736 },
@@ -179,9 +179,9 @@ export const DETAILED_STATION_TRACKS = [
     stationId: "pu",
     stationName: "Puconci (Industrijski odcep · SI43771)",
     tracks: [
-      { id: "PU-T1", eraId: "0079_SI43771_Tir-1", name: "Tir 1 (Glavni prehodni tir)", type: "PASSENGER_MAIN", maxSpeedKmh: 120, lengthM: 650, occupied: true, trainId: "SZ-IC-503", lat1: 46.7024, lon1: 16.1586, lat2: 46.7032, lon2: 16.1578 },
+      { id: "PU-T1", eraId: "0079_SI43771_Tir-1", name: "Tir 1 (Glavni prehodni tir)", type: "PASSENGER_MAIN", maxSpeedKmh: 120, lengthM: 650, occupied: false, trainId: "", lat1: 46.7024, lon1: 16.1586, lat2: 46.7032, lon2: 16.1578 },
       { id: "PU-T2", eraId: "0079_SI43771_Tir-2", name: "Tir 2 (Križanje tovornih vlakov)", type: "FREIGHT_LOOP", maxSpeedKmh: 50, lengthM: 600, occupied: false, trainId: "", lat1: 46.7026, lon1: 16.1588, lat2: 46.7034, lon2: 16.1580 },
-      { id: "PU-T3", eraId: "0079_SI43771_Tir-3", name: "Tir 3 (Industrijski tir Pomgrad Gramoznica)", type: "INDUSTRIAL_SIDING", maxSpeedKmh: 35, lengthM: 520, occupied: true, trainId: "SZ-84210", lat1: 46.7028, lon1: 16.1590, lat2: 46.7036, lon2: 16.1582 },
+      { id: "PU-T3", eraId: "0079_SI43771_Tir-3", name: "Tir 3 (Industrijski tir Pomgrad Gramoznica)", type: "INDUSTRIAL_SIDING", maxSpeedKmh: 35, lengthM: 520, occupied: false, trainId: "", lat1: 46.7028, lon1: 16.1590, lat2: 46.7036, lon2: 16.1582 },
     ],
   },
   // Hodoš Station Multi-Track Layout (ERA UOPID: SI43777)
@@ -202,7 +202,7 @@ export const DETAILED_STATION_TRACKS = [
     stationId: "kp",
     stationName: "Koper tovorna (Pristaniško ranžirišče · SI44361)",
     tracks: [
-      { id: "KP-T1", eraId: "0079_SI44361_Tir-1", name: "Tir 1 (Kontejnerski pomol I - Maersk)", type: "CONTAINER_QUAY", maxSpeedKmh: 40, lengthM: 750, occupied: true, trainId: "SZ-50501", lat1: 45.5385, lon1: 13.7370, lat2: 45.5400, lon2: 13.7410 },
+      { id: "KP-T1", eraId: "0079_SI44361_Tir-1", name: "Tir 1 (Kontejnerski pomol I - Maersk)", type: "CONTAINER_QUAY", maxSpeedKmh: 40, lengthM: 750, occupied: false, trainId: "", lat1: 45.5385, lon1: 13.7370, lat2: 45.5400, lon2: 13.7410 },
       { id: "KP-T2", eraId: "0079_SI44361_Tir-2", name: "Tir 2 (Kontejnerski pomol II - MSC)", type: "CONTAINER_QUAY", maxSpeedKmh: 40, lengthM: 750, occupied: false, trainId: "", lat1: 45.5390, lon1: 13.7375, lat2: 45.5405, lon2: 13.7415 },
       { id: "KP-T3", eraId: "0079_SI44361_Tir-3", name: "Tir 3 (Avtomobilski RO-RO terminal)", type: "AUTO_TERMINAL", maxSpeedKmh: 30, lengthM: 680, occupied: false, trainId: "", lat1: 45.5395, lon1: 13.7380, lat2: 45.5410, lon2: 13.7420 },
       { id: "KP-T4", eraId: "0079_SI44361_Tir-4", name: "Tir 4 (Razsuti tovor & premog)", type: "BULK_TERMINAL", maxSpeedKmh: 30, lengthM: 720, occupied: false, trainId: "", lat1: 45.5400, lon1: 13.7385, lat2: 45.5415, lon2: 13.7425 },
@@ -210,17 +210,18 @@ export const DETAILED_STATION_TRACKS = [
   },
 ];
 
-// Interlocking Switches (Kretnice) with dynamic animated positions
+// Physical Infrastructure Switches (Kretnice) - Official Registered Track Layout
 export const DISPATCHER_SWITCHES = [
   { id: "SW-MS-01", station: "Murska Sobota", name: "Kretnica 1 (Uvoz Sever iz Puconcev)", position: "STRAIGHT", locked: true, occ: false, train: "" },
-  { id: "SW-MS-02", station: "Murska Sobota", name: "Kretnica 2 (Tovorni plato Tir 3)", position: "DIVERGING", locked: true, occ: true, train: "SŽ / RCG 48401" },
+  { id: "SW-MS-02", station: "Murska Sobota", name: "Kretnica 2 (Tovorni plato Tir 3)", position: "STRAIGHT", locked: true, occ: false, train: "" },
   { id: "SW-MS-03", station: "Murska Sobota", name: "Kretnica 3 (Izvoz Lipovci / Ormož)", position: "STRAIGHT", locked: true, occ: false, train: "" },
-  { id: "SW-PU-01", station: "Puconci", name: "Kretnica 1 (Uvoz Glavni tir 1)", position: "STRAIGHT", locked: true, occ: true, train: "SŽ IC 503" },
-  { id: "SW-PU-02", station: "Puconci", name: "Kretnica 2 (Odcep Gramoznica Tir 3)", position: "DIVERGING", locked: true, occ: true, train: "SŽ 84210" },
+  { id: "SW-PU-01", station: "Puconci", name: "Kretnica 1 (Uvoz Glavni tir 1)", position: "STRAIGHT", locked: true, occ: false, train: "" },
+  { id: "SW-PU-02", station: "Puconci", name: "Kretnica 2 (Odcep Gramoznica Tir 3)", position: "STRAIGHT", locked: true, occ: false, train: "" },
   { id: "SW-HD-01", station: "Hodoš", name: "Kretnica 1 (Mejni uvoz MÁV)", position: "STRAIGHT", locked: true, occ: false, train: "" },
   { id: "SW-HD-02", station: "Hodoš", name: "Kretnica 2 (Ločišče napetosti 3kV/25kV)", position: "STRAIGHT", locked: true, occ: false, train: "" },
-  { id: "SW-KP-01", station: "Luka Koper", name: "Kretnica 1 (Uvoz Kontejnerski pomol)", position: "DIVERGING", locked: true, occ: true, train: "SŽ 50501" },
+  { id: "SW-KP-01", station: "Luka Koper", name: "Kretnica 1 (Uvoz Kontejnerski pomol)", position: "STRAIGHT", locked: true, occ: false, train: "" },
 ];
+
 
 // All key railway stations across Slovenia (Official ERA Registered)
 export const ALL_SLOVENIA_STATIONS = [
