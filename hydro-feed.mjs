@@ -154,24 +154,21 @@ class HydroFeed {
     setInterval(() => this.fetchData(), this.fetchIntervalMs);
   }
 
-  fetchData() {
-    http.get('http://www.arso.gov.si/xml/vode/hidro_podatki_zadnji.xml', res => {
-      if (res.statusCode !== 200) {
-        console.warn('[HydroFeed] ARSO XML status:', res.statusCode);
+  async fetchData() {
+    try {
+      const res = await fetch('https://www.arso.gov.si/xml/vode/hidro_podatki_zadnji.xml', {
+        headers: { 'User-Agent': 'TEST111-Hydro-Collector/1.0' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        console.warn('[HydroFeed] ARSO XML status:', res.status);
         return;
       }
-      let xml = '';
-      res.on('data', chunk => xml += chunk);
-      res.on('end', () => {
-        try {
-          this.parseArsoXml(xml);
-        } catch (e) {
-          console.error('[HydroFeed] XML parse error:', e);
-        }
-      });
-    }).on('error', err => {
+      const xml = await res.text();
+      this.parseArsoXml(xml);
+    } catch (err) {
       console.warn('[HydroFeed] Network error fetching ARSO:', err.message);
-    });
+    }
   }
 
   parseArsoXml(xml) {
@@ -298,6 +295,7 @@ class HydroFeed {
       totalStations: this.cache.stations.length,
       pomurjeCount: this.cache.pomurjeStations.length,
       activeAlertsCount: activeAlerts.length,
+      stations: this.cache.stations,
       pomurjeStations: this.cache.pomurjeStations,
       lorawanNodes: nodes,
       summary: {
