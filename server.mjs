@@ -37,6 +37,7 @@ import {
 } from "./pcap-exporter.mjs";
 import { hydroFeed } from "./hydro-feed.mjs";
 import { railFeed } from "./rail-feed.mjs";
+import { rtlGsmrReceiver } from "./rtl-gsmr-receiver.mjs";
 import { fetchEurofplCode } from "./eurofpl-feed.mjs";
 import { applyLiveRoutes, startLiveRoutePump, listLiveRoutes, liveRouteStatus, FPL_ROUTE_API } from "./fpl-feed.mjs";
 import { fetchArrivals, isSiArrival, FIDS_LJU, OPENSKY_ARRIVAL, HUBS } from "./arrivals-feed.mjs";
@@ -5192,21 +5193,8 @@ function startWidebandFeed() {
   setInterval(pull, 12_000);
 }
 
-// Background packet recording for Wireshark network inspection (LoRaWAN & Nokia GSM-R)
-setInterval(() => {
-  try {
-    const hydro = hydroFeed.getLiveHydro();
-    if (hydro.lorawanNodes && hydro.lorawanNodes.length > 0) {
-      const node = hydro.lorawanNodes[Math.floor(Math.random() * hydro.lorawanNodes.length)];
-      recordLoRaPacket(node);
-    }
-    const rail = railFeed.getRailDashboard();
-    if (rail.trains && rail.trains.length > 0) {
-      const tr = rail.trains[Math.floor(Math.random() * rail.trains.length)];
-      recordGsmrPacket(tr);
-    }
-  } catch {}
-}, 6000);
+// Start Live Real RTL-SDR GSM-R receiver streaming from ondaoscar (100.77.225.97:1234)
+rtlGsmrReceiver.start();
 
 async function detectSdrHost() {
   const pubPort = Number(process.env.SDR_PUBLIC_PORT || process.env.SDR_TCP_PORT || 50001);

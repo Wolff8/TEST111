@@ -286,6 +286,22 @@ export interface RailPayload {
     foreignTransitRatio: string;
     gsmrSignalHealth: string;
   };
+  sdrReceiver?: {
+    connected: boolean;
+    remoteHost: string;
+    remotePort: number;
+    device: string;
+    centerFreqHz: number;
+    sampleRate: string;
+    gain?: string;
+    liveThroughputKbps: number;
+    totalBytesRx: number;
+    totalPacketsEmitted: number;
+    lastBurstTime: string;
+    lastDbfs: number;
+    power9244: number;
+    power9252: number;
+  };
 }
 
 export const RailFleetDashboard: React.FC = () => {
@@ -299,6 +315,9 @@ export const RailFleetDashboard: React.FC = () => {
   const [showMasts, setShowMasts] = useState<boolean>(true);
   const [showStations, setShowStations] = useState<boolean>(true);
   const [showStationTracks, setShowStationTracks] = useState<boolean>(true);
+  const [showOrmStandard, setShowOrmStandard] = useState<boolean>(true);
+  const [showOrmSignals, setShowOrmSignals] = useState<boolean>(false);
+  const [showOrmMaxspeed, setShowOrmMaxspeed] = useState<boolean>(false);
   const [livePackets, setLivePackets] = useState<any[]>([]);
   const [audioPlayingId, setAudioPlayingId] = useState<string | null>(null);
 
@@ -312,6 +331,9 @@ export const RailFleetDashboard: React.FC = () => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const ormStandardRef = useRef<L.TileLayer | null>(null);
+  const ormSignalsRef = useRef<L.TileLayer | null>(null);
+  const ormMaxspeedRef = useRef<L.TileLayer | null>(null);
 
   // Web Audio API & Speech Synthesis EIRENE Radio Player
   const playGsmrCallAudio = (event: GsmrVoiceEvent) => {
@@ -437,8 +459,10 @@ export const RailFleetDashboard: React.FC = () => {
         if (res.ok && active) {
           const json = await res.json();
           if (json?.packets) {
-            const gsmrPkts = json.packets.filter((p: any) => p.protocol.includes("GSMR") || p.protocol.includes("LORA"));
-            setLivePackets(gsmrPkts.slice(0, 20));
+            const gsmrPkts = json.packets.filter(
+              (p: any) => p.protocol.includes("GSMR") || p.protocol.includes("LORA") || p.protocol.includes("GSMTAP")
+            );
+            setLivePackets(gsmrPkts.slice(0, 30));
           }
         }
       } catch {
@@ -480,6 +504,28 @@ export const RailFleetDashboard: React.FC = () => {
       opacity: 0.85,
     }).addTo(map);
 
+    // Official OpenRailwayMap Infrastructure Tile Layers
+    const ormStandard = L.tileLayer("https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      subdomains: ["a", "b", "c"],
+      opacity: 0.92,
+      attribution: "© OpenRailwayMap / OpenStreetMap",
+    });
+    const ormSignals = L.tileLayer("https://{s}.tiles.openrailwaymap.org/signals/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      subdomains: ["a", "b", "c"],
+      opacity: 0.9,
+    });
+    const ormMaxspeed = L.tileLayer("https://{s}.tiles.openrailwaymap.org/maxspeed/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      subdomains: ["a", "b", "c"],
+      opacity: 0.85,
+    });
+    ormStandardRef.current = ormStandard;
+    ormSignalsRef.current = ormSignals;
+    ormMaxspeedRef.current = ormMaxspeed;
+    if (showOrmStandard) ormStandard.addTo(map);
+
     const layerGroup = L.layerGroup().addTo(map);
     layerGroupRef.current = layerGroup;
     mapRef.current = map;
@@ -501,6 +547,29 @@ export const RailFleetDashboard: React.FC = () => {
       mapRef.current = null;
     };
   }, []);
+
+  // Synchronize OpenRailwayMap layers
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (showOrmStandard && ormStandardRef.current) {
+      if (!map.hasLayer(ormStandardRef.current)) map.addLayer(ormStandardRef.current);
+    } else if (ormStandardRef.current && map.hasLayer(ormStandardRef.current)) {
+      map.removeLayer(ormStandardRef.current);
+    }
+
+    if (showOrmSignals && ormSignalsRef.current) {
+      if (!map.hasLayer(ormSignalsRef.current)) map.addLayer(ormSignalsRef.current);
+    } else if (ormSignalsRef.current && map.hasLayer(ormSignalsRef.current)) {
+      map.removeLayer(ormSignalsRef.current);
+    }
+
+    if (showOrmMaxspeed && ormMaxspeedRef.current) {
+      if (!map.hasLayer(ormMaxspeedRef.current)) map.addLayer(ormMaxspeedRef.current);
+    } else if (ormMaxspeedRef.current && map.hasLayer(ormMaxspeedRef.current)) {
+      map.removeLayer(ormMaxspeedRef.current);
+    }
+  }, [showOrmStandard, showOrmSignals, showOrmMaxspeed]);
 
   // Pan to preset regions
   const setMapView = (lat: number, lon: number, zoom: number) => {
@@ -790,6 +859,25 @@ export const RailFleetDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Real RTL-SDR Physical Hardware Banner (Streaming from ondaoscar 20 km away) */}
+      <div style={{ padding: "6px 14px", background: data?.sdrReceiver?.connected ? "rgba(6, 78, 59, 0.45)" : "rgba(127, 29, 29, 0.45)", borderBottom: "1px solid #1e293b", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", fontSize: "11px", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: data?.sdrReceiver?.connected ? "#10b981" : "#ef4444", boxShadow: data?.sdrReceiver?.connected ? "0 0 8px #10b981" : "none" }} />
+          <span><b>RTL-SDR LIVE SPREJEMNIK (20 km):</b> <span style={{ color: "#38bdf8" }}>{data?.sdrReceiver?.remoteHost || "100.77.225.97:1234"} ({data?.sdrReceiver?.device || "Rafael Micro R820T"})</span></span>
+          <span style={{ color: "#94a3b8" }}>·</span>
+          <span>Center: <b style={{ color: "#f59e0b" }}>{((data?.sdrReceiver?.centerFreqHz || 924800000) / 1e6).toFixed(2)} MHz</b></span>
+          <span style={{ color: "#94a3b8" }}>·</span>
+          <span>Kanal A (924.4 MHz): <b style={{ color: "#34d399" }}>{data?.sdrReceiver?.power9244 ?? -99} dBFS</b></span>
+          <span style={{ color: "#94a3b8" }}>·</span>
+          <span>Kanal B (925.2 MHz): <b style={{ color: "#34d399" }}>{data?.sdrReceiver?.power9252 ?? -99} dBFS</b></span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#94a3b8" }}>
+          <span>Pretočeno: <b style={{ color: "#f8fafc" }}>{((data?.sdrReceiver?.totalBytesRx || 0) / 1e6).toFixed(1)} MB</b></span>
+          <span>GSMTAP: <b style={{ color: "#38bdf8" }}>{data?.sdrReceiver?.totalPacketsEmitted || 0}</b></span>
+          <span style={{ background: "#0284c7", color: "#fff", padding: "1px 6px", borderRadius: "3px", fontWeight: "bold" }}>UDP 4729 Wireshark</span>
+        </div>
+      </div>
+
       {/* Responsive Navigation Tabbar (Optimized for iPhone 17 Pro Max) */}
       <div style={{ display: "flex", background: "#090d16", borderBottom: "1px solid #1e293b", overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "4px 8px", gap: "6px" }}>
         <button onClick={() => setActiveTab("map")} style={tabStyle(activeTab === "map")}>
@@ -849,6 +937,21 @@ export const RailFleetDashboard: React.FC = () => {
               <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
                 <input type="checkbox" checked={showMasts} onChange={(e) => setShowMasts(e.target.checked)} />
                 Nokia GSM-R stolpi ({data?.masts?.length || 0})
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", color: "#34d399", fontWeight: "bold" }}>
+                <input type="checkbox" checked={showOrmStandard} onChange={(e) => setShowOrmStandard(e.target.checked)} />
+                🛤️ OpenRailwayMap (Uradni tiri)
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", color: "#fbbf24" }}>
+                <input type="checkbox" checked={showOrmSignals} onChange={(e) => setShowOrmSignals(e.target.checked)} />
+                🚦 Signali (ORM)
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", color: "#38bdf8" }}>
+                <input type="checkbox" checked={showOrmMaxspeed} onChange={(e) => setShowOrmMaxspeed(e.target.checked)} />
+                ⚡ Hitrosti & Napetost (ORM)
               </label>
 
               <span style={{ marginLeft: "auto", color: "#38bdf8", fontWeight: "bold" }}>

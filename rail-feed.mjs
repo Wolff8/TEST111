@@ -1041,8 +1041,27 @@ class RailFeedEngine {
       ],
     };
 
-    // Smooth real-time advancement along the track lines every 3 seconds
-    setInterval(() => this.tickTrainMovement(), 3000);
+    // Live RTL-SDR Physical Receiver State (Streaming from 100.77.225.97:1234 ondaoscar)
+    this.sdrReceiver = {
+      connected: false,
+      remoteHost: "100.77.225.97",
+      remotePort: 1234,
+      device: "Generic RTL2832U OEM (Rafael Micro R820T)",
+      centerFreqHz: 924_800_000,
+      sampleRate: "2.048 MS/s",
+      liveThroughputKbps: 0,
+      totalBytesRx: 0,
+      totalPacketsEmitted: 0,
+      lastBurstTime: null,
+      lastDbfs: -99,
+      power9244: -99,
+      power9252: -99,
+    };
+  }
+
+  updateSdrMetrics(metrics) {
+    if (!metrics) return;
+    this.sdrReceiver = { ...this.sdrReceiver, ...metrics };
   }
 
   // Toggle switch position interactively from UI
@@ -1165,6 +1184,7 @@ class RailFeedEngine {
       masts: this.masts,
       voiceEvents: this.voiceEvents,
       eraMetadata: this.eraMetadata,
+      sdrReceiver: this.sdrReceiver,
       trains: this.trains,
       stats: {
         totalLinesCovered: this.lines.length,
